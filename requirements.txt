@@ -1,0 +1,8 @@
+lightgbm==3.3.5
+matplotlib==3.7.1
+numpy==1.24.2
+pandas==1.5.3
+plotly==5.15.0
+scikit-learn
+scipy
+streamlit==1.22.0
