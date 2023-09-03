@@ -22,7 +22,7 @@ dataset[tgcg_column] = dataset[tgcg_column].str.lower()
 tgcg_counts = dataset[tgcg_column].value_counts()
 
 # Create a pie chart with counts and percentages
-fig = px.pie(tgcg_counts.reset_index(), values=tgcg_counts, names='index', title="Target vs Control Groups")
+fig = px.pie(tgcg_counts.reset_index(), values=tgcg_counts, names = tgcg_column, title="Target vs Control Groups")
 
 # Display the total counts and percentages in the labels
 fig.update_traces(textinfo='label+percent', textfont_size=12, insidetextorientation='radial')
@@ -129,7 +129,7 @@ for seg_column in continuous_segmentation_columns:
         control_df = oversampled_df[oversampled_df[tgcg_column] == 'control'][[tgcg_column, seg_column,kpi]]
 
         #this penalty is added to avoid segments with a lot of zeroes in the kadane algorithm
-        control_df[kpi] = control_df[kpi] +target_acceptance 
+        control_df[kpi] = control_df[kpi] +target_acceptance
 
         # Sort the dataframes
         target_df.sort_values(by=seg_column, inplace=True)
@@ -153,44 +153,52 @@ for seg_column in continuous_segmentation_columns:
 
         # Find the subintervals that maximize the sum of granular_uplift
         granular_uplift_array = concatenated_df['granular_uplift'].values
-        max_granular_uplift, start_index, end_index = kadane_algorithm(granular_uplift_array)
 
-        # Ensure that start_index is less than or equal to end_index
-        if start_index > end_index:
-            start_index, end_index = end_index, start_index
+        #now we calculate the best intervals for the array in both directions (max and min)
+        def process_segmentation(granular_uplift_array, concatenated_df, dataset, seg_column, kpi, tgcg_column, results_df):
+            max_granular_uplift, start_index, end_index = kadane_algorithm(granular_uplift_array)
+            if start_index > end_index:
+                max_granular_uplift, start_index, end_index = kadane_algorithm_mod(granular_uplift_array)
 
-        # Get the start and end values from 'concatenated_df' using the indices obtained
-        start_value = concatenated_df.iloc[start_index][seg_column]
-        end_value = concatenated_df.iloc[end_index][seg_column]
+            start_value = concatenated_df.iloc[start_index][seg_column]
+            end_value = concatenated_df.iloc[end_index][seg_column]
 
-        # Filter the 'dataset' dataframe to keep only the rows where the value in 'seg_column' is between 'start_value' and 'end_value'
-        filtered_dataset = dataset[(dataset[seg_column] >= start_value) & (dataset[seg_column] <= end_value)]
+            filtered_dataset = dataset[(dataset[seg_column] >= start_value) & (dataset[seg_column] <= end_value)]
+            
+            result_df = calculate_metrics2(filtered_dataset, kpi, tgcg_column)
+            
+            if not result_df.empty:
+                for index, row in result_df.iterrows():
+                    new_row = pd.DataFrame({
+                        "Segmentation Field": [seg_column],
+                        "Lower limit": [start_value],
+                        "Upper limit": [end_value],
+                        "KPI": [kpi],
+                        "TG Acceptors": [row["TG Acceptors"]],
+                        "TG Acceptance (%)": [row["TG Acceptance (%)"]],
+                        "CG Acceptors": [row["CG Acceptors"]],
+                        "CG Acceptance (%)": [row["CG Acceptance (%)"]],
+                        "Uplift (%)": [row["Uplift (%)"]],
+                        "P-value": [row["P-value"]],
+                    })
+                    results_df = pd.concat([results_df, new_row], ignore_index=True)
+            
+            return results_df
 
-        # Calculate the metrics
-        
-        result_df = calculate_metrics2(filtered_dataset, kpi, tgcg_column)
-        # Keep non-significant results as well
-
-        if not result_df.empty:
-            for index, row in result_df.iterrows():
-                new_row = pd.DataFrame({
-                    "Segmentation Field": [seg_column],
-                    "Lower limit": [start_value],
-                    "Upper limit": [end_value],
-                    "KPI": [kpi],
-                    "TG Acceptors": [row["TG Acceptors"]],
-                    "TG Acceptance (%)": [row["TG Acceptance (%)"]],
-                    "CG Acceptors": [row["CG Acceptors"]],
-                    "CG Acceptance (%)": [row["CG Acceptance (%)"]],
-                    "Uplift (%)": [row["Uplift (%)"]],
-                    "P-value": [row["P-value"]],
-                })
-                results_df = pd.concat([results_df, new_row], ignore_index=True)
+        for k in range(2):
+            if k == 1:
+                granular_uplift_array = get_negative_array(granular_uplift_array)
+            
+            results_df = process_segmentation(granular_uplift_array, concatenated_df, dataset, seg_column, kpi, tgcg_column, results_df)
+                    
 
 results_df["TG Acceptors"] = results_df["TG Acceptors"].astype(float).round(0).astype(int)
 results_df["CG Acceptors"] = results_df["CG Acceptors"].astype(float).round(0).astype(int)
 
-st.markdown(f"# Best intervals for continuous variables")
+#exclude non-significant results
+results_df = results_df[results_df['P-value'] <= significance_treshold]
+
+st.markdown(f"# Continuous variables with significant results")
 
 
 st.dataframe(results_df.style.apply(highlight_pvalue, axis=1))            
@@ -212,7 +220,6 @@ def calculate_relative_uplift(subset, kpi1, kpi2, value1, value2):
     return relative_uplift
 
 st.markdown(f"# Cross-KPI results")
-
 
 # Create an empty DataFrame with KPI labels as indices and columns.
 kpi_labels = [f'{kpi} = {val}' for kpi in kpi_columns for val in [0, 1]]
@@ -264,6 +271,3 @@ fig.update_layout(
 
 # Display the figure in the Streamlit user interface.
 st.plotly_chart(fig)
-
-
-st.write("4) Add filter feature to select certain values of segmentation columns")

@@ -4,8 +4,10 @@ import math
 import base64
 import scipy.special as scsp
 from sklearn.tree import _tree
+from matplotlib import pyplot as plt
 
-significance_treshold = 0.1
+
+significance_treshold = 0.05
 
 
 def z2p(z):
@@ -32,6 +34,35 @@ def kadane_algorithm(input_list):
             max_global = max_current
             end = i
     return max_global, start, end
+
+def kadane_algorithm_mod(input_list):
+    curr_sum = max_total = input_list[0]
+    start = end = 0
+    for i in range(1, len(input_list)):
+        curr_sum += input_list[i]
+        if curr_sum > max_total:
+            max_total = curr_sum
+            end = i
+        if curr_sum < 0:
+            curr_sum = 0
+    curr_sum = 0
+    for i in range(end, -1, -1): #second iteration for identifying the start of the interval of max sum
+        curr_sum += input_list[i]
+        if curr_sum == max_total:
+            start = i
+            break
+    return max_total, start, end
+
+def get_negative_array(values):
+    transformed_list = []
+    for value in values:
+        if value > 0.5:
+            transformed_list.append(-1)
+        elif value < -0.5:
+            transformed_list.append(1)
+        else:
+            transformed_list.append(value)
+    return transformed_list
 
 
 ####***Functions used during dataload***####
@@ -129,9 +160,12 @@ def calculate_metrics2(subset, kpi, tgcg_column):
 
 def highlight_pvalue(row):
     """Highlights rows with P-value <= significance_treshold."""
-    if float(row["P-value"]) <= significance_treshold:
-        return ["background-color: lightgreen"] * len(row)
-    return [""] * len(row)
+    if float(row["P-value"]) <= significance_treshold and float(row["Uplift (%)"]) >= 0:
+        return ["background-color: #CCFFCC"] * len(row)
+    elif float(row["P-value"]) <= significance_treshold and float(row["Uplift (%)"]) < 0:
+        return ["background-color: #FFEAEA"] * len(row)
+    else:
+        return [""] * len(row)
 
 def calculate_metrics(df, kpi_columns, tgcg_column):
     """Calculates metrics for a list of KPIs."""
@@ -237,3 +271,40 @@ def get_rules(tree, feature_names, class_names, class_of_interest):
             rules.append(rule)
 
     return rules
+
+def qini_curve(y_true, uplift_score):
+    # Sorting data by the uplift score
+    data = pd.DataFrame({'y_true': y_true, 'uplift_score': uplift_score}).sort_values('uplift_score', ascending=False)
+    data.reset_index(drop=True, inplace=True)
+    
+    data['target_cumsum'] = data.y_true.cumsum()
+    data['all_cumnum'] = range(1, len(data) + 1)
+
+    # Calculating the cumulative uplift as proportion
+    data['uplift_cum'] = data['target_cumsum'] / data['all_cumnum'] - data.iloc[0]['target_cumsum'] / len(data)
+    data['proportion_targeted'] = data['all_cumnum'] / len(data)  # new line to calculate proportion targeted
+
+    # Calculating the baseline (random model)
+    random_model = data['target_cumsum'].iloc[-1] / len(data) * data['proportion_targeted']
+
+    # Creating a figure and an axis
+    fig, ax = plt.subplots()
+
+    # Drawing the Qini curve with proportion targeted on x-axis
+    ax.plot(data['proportion_targeted'], data['uplift_cum'], label='Model')
+
+    # Drawing the baseline with proportion targeted
+    ax.plot(data['proportion_targeted'], random_model, label='Random')
+
+    # Labels and legend
+    ax.set_xlabel('Proportion targeted')
+    ax.set_ylabel('Cumulative Uplift')
+    ax.legend()
+
+    # Calculating the Qini area
+    qini_area = (data['uplift_cum'] - random_model).sum() / len(data)
+
+    return fig, ax, qini_area
+
+
+
