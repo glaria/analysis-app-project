@@ -38,7 +38,7 @@ results = calculate_metrics(dataset, kpi_columns, tgcg_column)
 
 # Convert the list of results to a pandas DataFrame
 result_df = pd.DataFrame(results, columns=["KPI", "TG Acceptors", "TG Acceptance (%)", "CG Acceptors", "CG Acceptance (%)", "Uplift (%)", "P-value"])
-result_df = result_df.applymap(format_float)
+result_df = result_df.map(format_float)
 
 # Apply highlight function
 highlighted_df = result_df.style.apply(highlight_pvalue, axis=1)
