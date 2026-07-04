@@ -129,8 +129,14 @@ else:
         lower_quartile = np.percentile(dataset['predictions'], 25)
 
         # Create a new binary column where 'Top25%' indicates the prediction is above the upper quartile
-        # and 'Bottom25%' indicates the prediction is below the lower quartile
-        dataset['top_bottom'] = np.where(dataset['predictions'] >= upper_quartile, 'Top25%', np.where(dataset['predictions'] <= lower_quartile, 'Bottom25%', np.nan))
+        # and 'Bottom25%' indicates the prediction is below the lower quartile.
+        # np.select with default=None keeps the middle 50% as real NaN (np.where would
+        # coerce np.nan to the string 'nan', which dropna cannot remove)
+        dataset['top_bottom'] = np.select(
+            [dataset['predictions'] >= upper_quartile, dataset['predictions'] <= lower_quartile],
+            ['Top25%', 'Bottom25%'],
+            default=None
+        )
 
         # Create an empty DataFrame to store the results
         results_df = pd.DataFrame(columns=["KPI", "TG Acceptors", "TG Acceptance (%)", "CG Acceptors", "CG Acceptance (%)", "Uplift (%)", "P-value"])

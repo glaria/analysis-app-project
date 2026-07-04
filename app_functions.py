@@ -21,6 +21,16 @@ def zscore(p1, p2, n1, n2): # p1, p2 proportions
     denominator = math.sqrt(p*(1-p)*((1/n1)+(1/n2)))
     return numerator/denominator
 
+def proportions_p_value(p1, p2, n1, n2):
+    """P-value of a two-proportion z-test, or None when the test is undefined
+    (empty groups, or pooled proportion of exactly 0 or 1)."""
+    if n1 == 0 or n2 == 0:
+        return None
+    pooled = (p1 * float(n1) + p2 * float(n2)) / (float(n1) + float(n2))
+    if pooled <= 0 or pooled >= 1:
+        return None
+    return z2p(zscore(p1, p2, n1, n2))
+
 def kadane_algorithm(input_list):
     max_current = max_global = input_list[0]
     start = end = 0
@@ -150,8 +160,8 @@ def calculate_metrics2(subset, kpi, tgcg_column):
     cg_acceptance = round((cg_acceptors / cg_total) * 100, 2) if cg_total != 0 else 0
 
     uplift = tg_acceptance - cg_acceptance
-    p_value = z2p(zscore(float(tg_acceptors)/float(tg_total), float(cg_acceptors)/float(cg_total),float(tg_total), float(cg_total))) if tg_total != 0 and cg_total != 0 else None
-    
+    p_value = proportions_p_value(float(tg_acceptors)/float(tg_total), float(cg_acceptors)/float(cg_total), float(tg_total), float(cg_total)) if tg_total != 0 and cg_total != 0 else None
+
     metrics.append([kpi, "{:.2f}".format(tg_acceptors), "{:.2f}".format(tg_acceptance), "{:.2f}".format(cg_acceptors), "{:.2f}".format(cg_acceptance), "{:.2f}".format(uplift), p_value])
     result_df = pd.DataFrame(metrics, columns=["KPI", "TG Acceptors", "TG Acceptance (%)", "CG Acceptors", "CG Acceptance (%)", "Uplift (%)", "P-value"])
     result_df['P-value'] = pd.to_numeric(result_df['P-value'], errors='coerce')
@@ -183,7 +193,7 @@ def calculate_metrics(df, kpi_columns, tgcg_column):
         cg_acceptance = round((cg_acceptors / cg_total) * 100, 2) if cg_total != 0 else 0
 
         uplift = tg_acceptance - cg_acceptance
-        p_value = z2p(zscore(tg_acceptors/tg_total, cg_acceptors/cg_total, tg_total, cg_total)) if tg_total != 0 and cg_total != 0 else None
+        p_value = proportions_p_value(tg_acceptors/tg_total, cg_acceptors/cg_total, tg_total, cg_total)
 
         metrics.append([kpi, "{:.2f}".format(tg_acceptors), "{:.2f}".format(tg_acceptance), "{:.2f}".format(cg_acceptors), "{:.2f}".format(cg_acceptance), "{:.2f}".format(uplift), p_value])
 

@@ -24,7 +24,7 @@ def process_file(uploaded_file, separator):
     if uploaded_file:
         try:
             if uploaded_file.type == "text/csv":
-                data = pd.read_csv(uploaded_file, sep=separator, error_bad_lines=False)
+                data = pd.read_csv(uploaded_file, sep=separator, on_bad_lines='skip')
             elif uploaded_file.type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
                 data = pd.read_excel(uploaded_file)
             else:
@@ -41,8 +41,13 @@ def process_file(uploaded_file, separator):
 # Process the uploaded file and convert it into a pandas DataFrame
 data = process_file(uploaded_file, csv_separator)
 try:
-    if "uploaded_data" not in st.session_state and len(data.columns) > 1:
-        st.session_state.uploaded_data = data
+    if data is not None and len(data.columns) > 1:
+        # Reload only when the file (or separator) changes, so in-session edits
+        # such as duplicate removal are not overwritten on every rerun
+        file_id = (uploaded_file.name, uploaded_file.size, csv_separator)
+        if st.session_state.get("uploaded_file_id") != file_id:
+            st.session_state.uploaded_file_id = file_id
+            st.session_state.uploaded_data = data
 except Exception:
     pass
 try: #show the dataframe but if no file loaded we hide the error
@@ -154,8 +159,8 @@ if data is not None and len(data.columns) > 1:
             st.session_state.store['uploaded_data'] = st.session_state.uploaded_data
             st.session_state.store['user_defined_info_dataset'] = st.session_state.user_defined_info_dataset
             
-            st.session_state.uploaded_data.to_csv("pages/temp/uploaded_data.csv", sep = ',', mode = 'w+')
-            st.session_state.user_defined_info_dataset.to_csv("pages/temp/user_defined_info_dataset.csv", sep = ',', mode = 'w+')
+            st.session_state.uploaded_data.to_csv("pages/temp/uploaded_data.csv", sep = ',', mode = 'w+', index = False)
+            st.session_state.user_defined_info_dataset.to_csv("pages/temp/user_defined_info_dataset.csv", sep = ',', mode = 'w+', index = False)
     else:
         st.error("There is an issue with the data types or meta types. Please review and correct them.")
 

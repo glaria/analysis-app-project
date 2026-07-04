@@ -78,13 +78,16 @@ for seg_column in segmentation_columns:
             all_results.append(result_df)
 
 # Concatenate all the DataFrames in the all_results list
-all_results_df = pd.concat(all_results)
+if all_results:
+    all_results_df = pd.concat(all_results)
 
-# Reset the DataFrame's index to ensure it is unique
-all_results_df.reset_index(drop=True, inplace=True)
+    # Reset the DataFrame's index to ensure it is unique
+    all_results_df.reset_index(drop=True, inplace=True)
 
-#apply the style and display de df
-st.dataframe(all_results_df.style.apply(highlight_pvalue, axis=1))
+    #apply the style and display de df
+    st.dataframe(all_results_df.style.apply(highlight_pvalue, axis=1))
+else:
+    st.info("No discrete segments with statistically significant results were found.")
 
 
 
@@ -201,7 +204,10 @@ results_df = results_df[results_df['P-value'] <= significance_treshold]
 st.markdown(f"# Continuous variables with significant results")
 
 
-st.dataframe(results_df.style.apply(highlight_pvalue, axis=1))            
+if not results_df.empty:
+    st.dataframe(results_df.style.apply(highlight_pvalue, axis=1))
+else:
+    st.info("No continuous-variable intervals with statistically significant results were found.")
 #st.markdown(download_csv_link(results_df, f"results_{seg_column}_{unique_value}.csv"), unsafe_allow_html=True)
 
 ##fin seccion variables segmentacion continuas
