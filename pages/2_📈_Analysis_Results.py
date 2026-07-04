@@ -9,15 +9,15 @@ st.set_page_config(page_title="Analysis", page_icon="📈", layout="wide",)
 
 st.markdown("# Campaign results")
 
-# dataset and information_dataset
-dataset = pd.read_csv("pages/temp/uploaded_data.csv", sep = ',')  
-information_dataset = pd.read_csv("pages/temp/user_defined_info_dataset.csv", sep = ',') 
+# dataset and information_dataset come from the cached loader: reruns of this
+# page reuse the in-memory copy instead of re-reading the files from disk.
+# The token changes whenever the Data Load page writes new data, which
+# invalidates every cached computation below.
+token = data_token()
+dataset, information_dataset = load_processed_data(token)
 
-# Extract the TGCG column from the dataset
+# Extract the TGCG column from the dataset (values already lowercased by the loader)
 tgcg_column = information_dataset.loc[information_dataset['METATYPE'] == 'TGCG', 'COLUMN'].values[0]
-
-# Set to lower TGCG column: TARGET-> target, Control -> control
-dataset[tgcg_column] = dataset[tgcg_column].str.lower()
 
 tgcg_counts = dataset[tgcg_column].value_counts()
 
@@ -33,11 +33,17 @@ st.plotly_chart(fig)
 # Get all KPI columns
 kpi_columns = information_dataset.loc[information_dataset['METATYPE'] == 'KPI', 'COLUMN'].values
 
-# Calculate metrics for each KPI and store the results in a list
-results = calculate_metrics(dataset, kpi_columns, tgcg_column) 
 
-# Convert the list of results to a pandas DataFrame
-result_df = pd.DataFrame(results, columns=["KPI", "TG Acceptors", "TG Acceptance (%)", "CG Acceptors", "CG Acceptance (%)", "Uplift (%)", "P-value"])
+@st.cache_data
+def overall_results(token):
+    dataset, information_dataset = load_processed_data(token)
+    tgcg_column = information_dataset.loc[information_dataset['METATYPE'] == 'TGCG', 'COLUMN'].values[0]
+    kpi_columns = information_dataset.loc[information_dataset['METATYPE'] == 'KPI', 'COLUMN'].values
+    return calculate_metrics(dataset, kpi_columns, tgcg_column)
+
+
+# Calculate metrics for each KPI
+result_df = overall_results(token)
 result_df = result_df.map(format_float)
 
 # Apply highlight function
@@ -50,156 +56,167 @@ st.markdown(download_csv_link(result_df, "results.csv"), unsafe_allow_html=True)
 
 # Segment fields
 st.markdown(f"# Discrete Segments with significant results")
-# 1. Identify the segmentation columns
 
-segmentation_columns = information_dataset.loc[(information_dataset['METATYPE'] == 'SF') & 
-                                              (information_dataset['DATATYPE'].isin(['NUM_ST', 'BOOL', 'STRING'])), 
-                                              'COLUMN'].values
-continue_segmentation_columns = information_dataset.loc[(information_dataset['METATYPE'] == 'SF') & 
-                                              (information_dataset['DATATYPE'].isin(['NUMERIC'])), 
-                                              'COLUMN'].values
-#st.write(continue_segmentation_columns)
-# iterate over segmentation columns
 
-# Create an empty list to store all result DataFrames
-all_results = []
+@st.cache_data
+def discrete_segment_results(token):
+    """Significant (segment value, KPI) combinations, or None when there are none."""
+    dataset, information_dataset = load_processed_data(token)
+    tgcg_column = information_dataset.loc[information_dataset['METATYPE'] == 'TGCG', 'COLUMN'].values[0]
+    kpi_columns = information_dataset.loc[information_dataset['METATYPE'] == 'KPI', 'COLUMN'].values
+    segmentation_columns = information_dataset.loc[(information_dataset['METATYPE'] == 'SF') &
+                                                  (information_dataset['DATATYPE'].isin(['NUM_ST', 'BOOL', 'STRING'])),
+                                                  'COLUMN'].values
 
-for seg_column in segmentation_columns:
-    for unique_value in dataset[seg_column].unique():
-        subset = dataset[dataset[seg_column] == unique_value]
-        result_df = calculate_metrics(subset, kpi_columns, tgcg_column)
-        result_df = result_df[result_df['P-value'] <= significance_treshold]
-        if not result_df.empty:
-            # Add 'Segmentation Column' to result_df
-            result_df.insert(0, 'Segmentation Column', seg_column)
-            # Add 'value' column to result_df
-            result_df.insert(1, 'value', unique_value)
-            # Add result_df to all_results list
-            all_results.append(result_df)
+    all_results = []
+    for seg_column in segmentation_columns:
+        for unique_value in dataset[seg_column].unique():
+            subset = dataset[dataset[seg_column] == unique_value]
+            result_df = calculate_metrics(subset, kpi_columns, tgcg_column)
+            result_df = result_df[result_df['P-value'] <= significance_treshold]
+            if not result_df.empty:
+                # Add 'Segmentation Column' to result_df
+                result_df.insert(0, 'Segmentation Column', seg_column)
+                # Add 'value' column to result_df
+                result_df.insert(1, 'value', unique_value)
+                # Add result_df to all_results list
+                all_results.append(result_df)
 
-# Concatenate all the DataFrames in the all_results list
-if all_results:
+    if not all_results:
+        return None
+
     all_results_df = pd.concat(all_results)
-
     # Reset the DataFrame's index to ensure it is unique
     all_results_df.reset_index(drop=True, inplace=True)
+    return all_results_df
 
+
+all_results_df = discrete_segment_results(token)
+if all_results_df is not None:
     #apply the style and display de df
     st.dataframe(all_results_df.style.apply(highlight_pvalue, axis=1))
 else:
     st.info("No discrete segments with statistically significant results were found.")
 
 
-
-            #st.markdown(download_csv_link(result_df, f"results_{seg_column}_{unique_value}.csv"), unsafe_allow_html=True)
-
-
 ##seccion variables segmentacion continuas
 #Para calcular los mejores segmentos (intervalos) de variables continuas (sin definir cuantiles ) primero debemos reescalar el control group para tener el mismo número de elementos que target
 
-# Identify the continuous segmentation columns
-continuous_segmentation_columns = information_dataset.loc[
-    (information_dataset['METATYPE'] == 'SF') & 
-    (information_dataset['DATATYPE'].isin(['NUMERIC'])), 'COLUMN'].values
 
-# Identify the minority and majority classes
-minority_class = dataset[tgcg_column].value_counts().idxmin()
-majority_class = dataset[tgcg_column].value_counts().idxmax()
+@st.cache_data
+def continuous_interval_results(token):
+    """Best/worst intervals of the continuous segmentation fields (Kadane), significant results only."""
+    dataset, information_dataset = load_processed_data(token)
+    tgcg_column = information_dataset.loc[information_dataset['METATYPE'] == 'TGCG', 'COLUMN'].values[0]
+    kpi_columns = information_dataset.loc[information_dataset['METATYPE'] == 'KPI', 'COLUMN'].values
 
-# Split the dataset into two based on the minority and majority classes
-minority_df = dataset[dataset[tgcg_column] == minority_class]
-majority_df = dataset[dataset[tgcg_column] == majority_class]
+    # Identify the continuous segmentation columns
+    continuous_segmentation_columns = information_dataset.loc[
+        (information_dataset['METATYPE'] == 'SF') &
+        (information_dataset['DATATYPE'].isin(['NUMERIC'])), 'COLUMN'].values
 
-# Oversample the minority class
-minority_oversampled = minority_df.sample(len(majority_df), replace=True, random_state=42)
+    # Identify the minority and majority classes
+    minority_class = dataset[tgcg_column].value_counts().idxmin()
+    majority_class = dataset[tgcg_column].value_counts().idxmax()
 
-# Combine the oversampled dataframe with the majority class dataframe
-oversampled_df = pd.concat([majority_df, minority_oversampled], axis=0)
+    # Split the dataset into two based on the minority and majority classes
+    minority_df = dataset[dataset[tgcg_column] == minority_class]
+    majority_df = dataset[dataset[tgcg_column] == majority_class]
 
-# Create an empty DataFrame to store the results
-results_df = pd.DataFrame(columns=["Segmentation Field", "Lower limit", "Upper limit", "KPI", "TG Acceptors", "TG Acceptance (%)", "CG Acceptors", "CG Acceptance (%)", "Uplift (%)", "P-value"])
+    # Oversample the minority class
+    minority_oversampled = minority_df.sample(len(majority_df), replace=True, random_state=42)
 
-# Iterate over the different numerical fields for which we want to calculate the best intervals
-for seg_column in continuous_segmentation_columns:
-    for kpi in kpi_columns:
-        # Create a dataframe with 'target' records only
-        target_df = oversampled_df[oversampled_df[tgcg_column] == 'target'][[tgcg_column, seg_column,kpi]]
+    # Combine the oversampled dataframe with the majority class dataframe
+    oversampled_df = pd.concat([majority_df, minority_oversampled], axis=0)
 
-        #calculate target acceptance (to be used as a penalty in the Kadane's algorithm )
-        target_acceptance = target_df[kpi].sum()/len(target_df)
+    result_columns = ["Segmentation Field", "Lower limit", "Upper limit", "KPI", "TG Acceptors", "TG Acceptance (%)", "CG Acceptors", "CG Acceptance (%)", "Uplift (%)", "P-value"]
+    # Collect result rows in a list and build the DataFrame once at the end
+    result_rows = []
 
-        # Create a dataframe with 'control' records only
-        control_df = oversampled_df[oversampled_df[tgcg_column] == 'control'][[tgcg_column, seg_column,kpi]]
+    def process_segmentation(granular_uplift_array, concatenated_df, dataset, seg_column, kpi, tgcg_column):
+        max_granular_uplift, start_index, end_index = kadane_algorithm(granular_uplift_array)
+        if start_index > end_index:
+            max_granular_uplift, start_index, end_index = kadane_algorithm_mod(granular_uplift_array)
 
-        #this penalty is added to avoid segments with a lot of zeroes in the kadane algorithm
-        control_df[kpi] = control_df[kpi] +target_acceptance
+        start_value = concatenated_df.iloc[start_index][seg_column]
+        end_value = concatenated_df.iloc[end_index][seg_column]
 
-        # Sort the dataframes
-        target_df.sort_values(by=seg_column, inplace=True)
-        control_df.sort_values(by=seg_column, inplace=True)
+        filtered_dataset = dataset[(dataset[seg_column] >= start_value) & (dataset[seg_column] <= end_value)]
 
-        # Reset the indices of the dataframes
-        target_df.reset_index(drop=True, inplace=True)
-        control_df.reset_index(drop=True, inplace=True)
+        result_df = calculate_metrics2(filtered_dataset, kpi, tgcg_column)
 
-        # Rename the columns in control_df before concatenating
-        control_df.columns = [col + "_control" for col in control_df.columns]
+        for index, row in result_df.iterrows():
+            result_rows.append({
+                "Segmentation Field": seg_column,
+                "Lower limit": start_value,
+                "Upper limit": end_value,
+                "KPI": kpi,
+                "TG Acceptors": row["TG Acceptors"],
+                "TG Acceptance (%)": row["TG Acceptance (%)"],
+                "CG Acceptors": row["CG Acceptors"],
+                "CG Acceptance (%)": row["CG Acceptance (%)"],
+                "Uplift (%)": row["Uplift (%)"],
+                "P-value": row["P-value"],
+            })
 
-        # Concatenate the two dataframes
-        concatenated_df = pd.concat([target_df, control_df], axis=1)
+    # Iterate over the different numerical fields for which we want to calculate the best intervals
+    for seg_column in continuous_segmentation_columns:
+        for kpi in kpi_columns:
+            # Create a dataframe with 'target' records only
+            target_df = oversampled_df[oversampled_df[tgcg_column] == 'target'][[tgcg_column, seg_column,kpi]]
 
-        # Calculate the mean of seg_column and seg_column_control, in case some values do not match exactly
-        concatenated_df[seg_column] = (concatenated_df[seg_column] + concatenated_df[seg_column + "_control"]) / 2
+            #calculate target acceptance (to be used as a penalty in the Kadane's algorithm )
+            target_acceptance = target_df[kpi].sum()/len(target_df)
 
-        # Calculate the difference between kpi and kpi_control
-        concatenated_df['granular_uplift'] = concatenated_df[kpi] - concatenated_df[kpi + "_control"]
+            # Create a dataframe with 'control' records only
+            control_df = oversampled_df[oversampled_df[tgcg_column] == 'control'][[tgcg_column, seg_column,kpi]].copy()
 
-        # Find the subintervals that maximize the sum of granular_uplift
-        granular_uplift_array = concatenated_df['granular_uplift'].values
+            #this penalty is added to avoid segments with a lot of zeroes in the kadane algorithm
+            control_df[kpi] = control_df[kpi] +target_acceptance
 
-        #now we calculate the best intervals for the array in both directions (max and min)
-        def process_segmentation(granular_uplift_array, concatenated_df, dataset, seg_column, kpi, tgcg_column, results_df):
-            max_granular_uplift, start_index, end_index = kadane_algorithm(granular_uplift_array)
-            if start_index > end_index:
-                max_granular_uplift, start_index, end_index = kadane_algorithm_mod(granular_uplift_array)
+            # Sort the dataframes
+            target_df = target_df.sort_values(by=seg_column)
+            control_df = control_df.sort_values(by=seg_column)
 
-            start_value = concatenated_df.iloc[start_index][seg_column]
-            end_value = concatenated_df.iloc[end_index][seg_column]
+            # Reset the indices of the dataframes
+            target_df.reset_index(drop=True, inplace=True)
+            control_df.reset_index(drop=True, inplace=True)
 
-            filtered_dataset = dataset[(dataset[seg_column] >= start_value) & (dataset[seg_column] <= end_value)]
-            
-            result_df = calculate_metrics2(filtered_dataset, kpi, tgcg_column)
-            
-            if not result_df.empty:
-                for index, row in result_df.iterrows():
-                    new_row = pd.DataFrame({
-                        "Segmentation Field": [seg_column],
-                        "Lower limit": [start_value],
-                        "Upper limit": [end_value],
-                        "KPI": [kpi],
-                        "TG Acceptors": [row["TG Acceptors"]],
-                        "TG Acceptance (%)": [row["TG Acceptance (%)"]],
-                        "CG Acceptors": [row["CG Acceptors"]],
-                        "CG Acceptance (%)": [row["CG Acceptance (%)"]],
-                        "Uplift (%)": [row["Uplift (%)"]],
-                        "P-value": [row["P-value"]],
-                    })
-                    results_df = pd.concat([results_df, new_row], ignore_index=True)
-            
-            return results_df
+            # Rename the columns in control_df before concatenating
+            control_df.columns = [col + "_control" for col in control_df.columns]
 
-        for k in range(2):
-            if k == 1:
-                granular_uplift_array = get_negative_array(granular_uplift_array)
-            
-            results_df = process_segmentation(granular_uplift_array, concatenated_df, dataset, seg_column, kpi, tgcg_column, results_df)
-                    
+            # Concatenate the two dataframes
+            concatenated_df = pd.concat([target_df, control_df], axis=1)
 
-results_df["TG Acceptors"] = results_df["TG Acceptors"].astype(float).round(0).astype(int)
-results_df["CG Acceptors"] = results_df["CG Acceptors"].astype(float).round(0).astype(int)
+            # Calculate the mean of seg_column and seg_column_control, in case some values do not match exactly
+            concatenated_df[seg_column] = (concatenated_df[seg_column] + concatenated_df[seg_column + "_control"]) / 2
 
-#exclude non-significant results
-results_df = results_df[results_df['P-value'] <= significance_treshold]
+            # Calculate the difference between kpi and kpi_control
+            concatenated_df['granular_uplift'] = concatenated_df[kpi] - concatenated_df[kpi + "_control"]
+
+            # Find the subintervals that maximize the sum of granular_uplift
+            granular_uplift_array = concatenated_df['granular_uplift'].values
+
+            #now we calculate the best intervals for the array in both directions (max and min)
+            for k in range(2):
+                if k == 1:
+                    granular_uplift_array = get_negative_array(granular_uplift_array)
+
+                process_segmentation(granular_uplift_array, concatenated_df, dataset, seg_column, kpi, tgcg_column)
+
+    results_df = pd.DataFrame(result_rows, columns=result_columns)
+    if results_df.empty:
+        return results_df
+
+    results_df["TG Acceptors"] = results_df["TG Acceptors"].astype(float).round(0).astype(int)
+    results_df["CG Acceptors"] = results_df["CG Acceptors"].astype(float).round(0).astype(int)
+
+    #exclude non-significant results
+    results_df = results_df[results_df['P-value'] <= significance_treshold]
+    return results_df
+
+
+results_df = continuous_interval_results(token)
 
 st.markdown(f"# Continuous variables with significant results")
 
@@ -208,34 +225,50 @@ if not results_df.empty:
     st.dataframe(results_df.style.apply(highlight_pvalue, axis=1))
 else:
     st.info("No continuous-variable intervals with statistically significant results were found.")
-#st.markdown(download_csv_link(results_df, f"results_{seg_column}_{unique_value}.csv"), unsafe_allow_html=True)
 
 ##fin seccion variables segmentacion continuas
 
-def calculate_relative_uplift(subset, kpi1, kpi2, value1, value2):
-    tg_count = len(subset[(subset[tgcg_column] == 'target') & (subset[kpi1] == value1) & (subset[kpi2] == value2)])
-    tg_total = len(subset[subset[tgcg_column] == 'target'])
-
-    cg_count = len(subset[(subset[tgcg_column] == 'control') & (subset[kpi1] == value1) & (subset[kpi2] == value2)])
-    cg_total = len(subset[subset[tgcg_column] == 'control'])
-
-    tg_acceptance = round((tg_count / tg_total) * 100, 2) if tg_total != 0 else 0
-    cg_acceptance = round((cg_count / cg_total) * 100, 2) if cg_total != 0 else 0
-    uplift = tg_acceptance - cg_acceptance
-    relative_uplift = (uplift / cg_acceptance) * 100 if cg_acceptance != 0 else 0
-    return relative_uplift
-
 st.markdown(f"# Cross-KPI results")
 
-# Create an empty DataFrame with KPI labels as indices and columns.
-kpi_labels = [f'{kpi} = {val}' for kpi in kpi_columns for val in [0, 1]]
-matrix_df = pd.DataFrame(index=kpi_labels, columns=kpi_labels)
 
-# Fill matrix with relative uplifts
-for row_label, col_label in itertools.product(kpi_labels, repeat=2):
-    kpi1, value1 = row_label.split(' = ')
-    kpi2, value2 = col_label.split(' = ')
-    matrix_df.loc[row_label, col_label] = calculate_relative_uplift(dataset, kpi1, kpi2, int(value1), int(value2))
+@st.cache_data
+def cross_kpi_matrix(token):
+    """Relative uplift for every pair of KPI outcomes.
+    One groupby per KPI pair instead of one full-dataframe scan per matrix cell."""
+    dataset, information_dataset = load_processed_data(token)
+    tgcg_column = information_dataset.loc[information_dataset['METATYPE'] == 'TGCG', 'COLUMN'].values[0]
+    kpi_columns = information_dataset.loc[information_dataset['METATYPE'] == 'KPI', 'COLUMN'].values
+
+    kpi_labels = [f'{kpi} = {val}' for kpi in kpi_columns for val in [0, 1]]
+    matrix_df = pd.DataFrame(index=kpi_labels, columns=kpi_labels)
+
+    tg_total = (dataset[tgcg_column] == 'target').sum()
+    cg_total = (dataset[tgcg_column] == 'control').sum()
+
+    for kpi1, kpi2 in itertools.product(kpi_columns, repeat=2):
+        if kpi1 == kpi2:
+            counts = dataset.groupby([tgcg_column, kpi1], observed=True).size()
+            def get_count(group, value1, value2):
+                return counts.get((group, value1), 0) if value1 == value2 else 0
+        else:
+            counts = dataset.groupby([tgcg_column, kpi1, kpi2], observed=True).size()
+            def get_count(group, value1, value2):
+                return counts.get((group, value1, value2), 0)
+
+        for value1, value2 in itertools.product([0, 1], repeat=2):
+            tg_count = get_count('target', value1, value2)
+            cg_count = get_count('control', value1, value2)
+
+            tg_acceptance = round((tg_count / tg_total) * 100, 2) if tg_total != 0 else 0
+            cg_acceptance = round((cg_count / cg_total) * 100, 2) if cg_total != 0 else 0
+            uplift = tg_acceptance - cg_acceptance
+            relative_uplift = (uplift / cg_acceptance) * 100 if cg_acceptance != 0 else 0
+            matrix_df.loc[f'{kpi1} = {value1}', f'{kpi2} = {value2}'] = relative_uplift
+
+    return matrix_df
+
+
+matrix_df = cross_kpi_matrix(token)
 
 # Display the matrix in the user interface
 st.write(matrix_df)

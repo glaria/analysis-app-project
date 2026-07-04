@@ -1,13 +1,51 @@
+import os
 import pandas as pd
 import numpy as np
 import math
 import base64
 import scipy.special as scsp
+import streamlit as st
 from sklearn.tree import _tree
 from matplotlib import pyplot as plt
 
 
 significance_treshold = 0.05
+
+
+###*** Processed-data handoff between pages ***###
+# Parquet is the primary format (faster, preserves dtypes); the CSV pair is kept
+# as a fallback so datasets processed by older versions of the app still load.
+DATA_PARQUET = "pages/temp/uploaded_data.parquet"
+INFO_PARQUET = "pages/temp/user_defined_info_dataset.parquet"
+DATA_CSV = "pages/temp/uploaded_data.csv"
+INFO_CSV = "pages/temp/user_defined_info_dataset.csv"
+
+def _use_parquet():
+    if not os.path.exists(DATA_PARQUET):
+        return False
+    if not os.path.exists(DATA_CSV):
+        return True
+    return os.path.getmtime(DATA_PARQUET) >= os.path.getmtime(DATA_CSV)
+
+def data_token():
+    """Cache key that changes whenever the Data Load page writes new data."""
+    return os.path.getmtime(DATA_PARQUET if _use_parquet() else DATA_CSV)
+
+@st.cache_data
+def load_processed_data(token):
+    """Load the dataset and metadata written by the Data Load page.
+    `token` (see data_token) invalidates the cache when the files change.
+    The TGCG column is already lowercased here for all consumer pages."""
+    if _use_parquet():
+        dataset = pd.read_parquet(DATA_PARQUET)
+        information_dataset = pd.read_parquet(INFO_PARQUET)
+    else:
+        dataset = pd.read_csv(DATA_CSV, sep=',')
+        information_dataset = pd.read_csv(INFO_CSV, sep=',')
+    tgcg_column = information_dataset.loc[information_dataset['METATYPE'] == 'TGCG', 'COLUMN'].values[0]
+    dataset[tgcg_column] = dataset[tgcg_column].str.lower()
+    return dataset, information_dataset
+###***    ***###
 
 
 def z2p(z):
@@ -109,6 +147,21 @@ def infer_datatypes_and_metatypes(dataset: pd.DataFrame) -> pd.DataFrame:
     inferred_info_dataset = pd.DataFrame(info_data)
     return inferred_info_dataset
 
+def _is_numeric_column(col: pd.Series) -> bool:
+    """All non-null values are numeric (bools count as numeric, like isinstance(x, int))."""
+    if pd.api.types.is_numeric_dtype(col):
+        return True
+    inferred = pd.api.types.infer_dtype(col, skipna=True)
+    return inferred in ('integer', 'floating', 'mixed-integer-float', 'boolean', 'empty')
+
+def _is_string_column(col: pd.Series) -> bool:
+    return pd.api.types.infer_dtype(col, skipna=True) in ('string', 'empty')
+
+def _is_bool_column(col: pd.Series) -> bool:
+    if pd.api.types.is_bool_dtype(col):
+        return True
+    return pd.api.types.infer_dtype(col, skipna=True) in ('boolean', 'empty')
+
 def validate_datatypes_and_metatypes(dataset: pd.DataFrame, info_dataset: pd.DataFrame) -> bool:
     datatype_values = ['BOOL', 'STRING', 'NUM_ST', 'NUMERIC']
     metatype_values = ['TGCG', 'PK', 'KPI', 'SF']
@@ -121,22 +174,24 @@ def validate_datatypes_and_metatypes(dataset: pd.DataFrame, info_dataset: pd.Dat
         if datatype not in datatype_values or metatype not in metatype_values:
             return False
 
-        if metatype == 'TGCG' and not dataset[column].apply(lambda x: x.lower() in ['target', 'control'] if pd.notnull(x) else True).all():
+        col = dataset[column]
+
+        if metatype == 'TGCG' and not col.dropna().astype(str).str.lower().isin(['target', 'control']).all():
             return False
 
-        if datatype == 'BOOL' and not dataset[column].apply(lambda x: isinstance(x, bool) if pd.notnull(x) else True).all():
+        if datatype == 'BOOL' and not _is_bool_column(col):
             return False
 
-        if datatype == 'STRING' and not dataset[column].apply(lambda x: isinstance(x, str) if pd.notnull(x) else True).all():
+        if datatype == 'STRING' and not _is_string_column(col):
             return False
 
-        if datatype == 'NUM_ST' and not (dataset[column].nunique() < 10 and dataset[column].apply(lambda x: isinstance(x, (int, float)) if pd.notnull(x) else True).all()):
+        if datatype == 'NUM_ST' and not (col.nunique() < 10 and _is_numeric_column(col)):
             return False
 
-        if datatype == 'NUMERIC' and not dataset[column].apply(lambda x: isinstance(x, (int, float)) if pd.notnull(x) else True).all():
+        if datatype == 'NUMERIC' and not _is_numeric_column(col):
             return False
 
-        if metatype == 'KPI' and not dataset[column].apply(lambda x: isinstance(x, (int, float)) if pd.notnull(x) else True).all():
+        if metatype == 'KPI' and not _is_numeric_column(col):
             return False
 
     return True
@@ -217,17 +272,15 @@ def download_csv_link(df, filename, message="Click here to download this table")
 
 ###*** Functions exclusive of the Advanced Analytics page ***###
 def oversample(df, group_cols):
-    # biggest group in terms of size
-    max_size = df[group_cols].value_counts().max()
-    # empty df that will be filled in
-    df_oversampled = pd.DataFrame()
-    # group columns per group_cols and oversample each of the groups
-    for group, group_df in df.groupby(group_cols):
-        oversampled_group = group_df.sample(max_size, replace=True)
-        df_oversampled = pd.concat([df_oversampled, oversampled_group], axis=0)
+    """Resample every (group_cols) group up to the size of the largest group."""
+    max_size = df.groupby(group_cols, observed=True).size().max()
+    return df.groupby(group_cols, observed=True, group_keys=False).sample(n=max_size, replace=True)
 
-    # return oversampled dataframe
-    return df_oversampled
+def balanced_sample_weight(df, group_cols):
+    """Per-row training weights equivalent to oversampling every (group_cols)
+    group to the largest group's size, without duplicating any rows."""
+    group_sizes = df.groupby(group_cols, observed=True)[group_cols[0]].transform('size')
+    return (group_sizes.max() / group_sizes).to_numpy()
 
 def get_rules(tree, feature_names, class_names, class_of_interest):
     """ Extract the rules of a decisition tree algorithm """

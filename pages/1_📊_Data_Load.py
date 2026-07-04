@@ -159,8 +159,13 @@ if data is not None and len(data.columns) > 1:
             st.session_state.store['uploaded_data'] = st.session_state.uploaded_data
             st.session_state.store['user_defined_info_dataset'] = st.session_state.user_defined_info_dataset
             
-            st.session_state.uploaded_data.to_csv("pages/temp/uploaded_data.csv", sep = ',', mode = 'w+', index = False)
-            st.session_state.user_defined_info_dataset.to_csv("pages/temp/user_defined_info_dataset.csv", sep = ',', mode = 'w+', index = False)
+            try:
+                st.session_state.uploaded_data.to_parquet("pages/temp/uploaded_data.parquet", index=False)
+                st.session_state.user_defined_info_dataset.to_parquet("pages/temp/user_defined_info_dataset.parquet", index=False)
+            except Exception:
+                # parquet needs homogeneous column types; fall back to the legacy CSV handoff
+                st.session_state.uploaded_data.to_csv("pages/temp/uploaded_data.csv", sep = ',', mode = 'w+', index = False)
+                st.session_state.user_defined_info_dataset.to_csv("pages/temp/user_defined_info_dataset.csv", sep = ',', mode = 'w+', index = False)
     else:
         st.error("There is an issue with the data types or meta types. Please review and correct them.")
 

@@ -1,0 +1,6 @@
+# Python bytecode
+__pycache__/
+*.pyc
+
+# Session data written by the Data Load page (may contain real customer data)
+pages/temp/
