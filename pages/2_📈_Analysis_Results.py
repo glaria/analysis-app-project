@@ -13,8 +13,23 @@ st.markdown("# Campaign results")
 # page reuse the in-memory copy instead of re-reading the files from disk.
 # The token changes whenever the Data Load page writes new data, which
 # invalidates every cached computation below.
-token = data_token()
+try:
+    token = data_token()
+except (FileNotFoundError, OSError):
+    st.info("No processed data found. Please upload and process a dataset in the Data Load page first.")
+    st.markdown("Go to the [Data Load page](Data_Load)")
+    st.stop()
+
 dataset, information_dataset = load_processed_data(token)
+
+# Analysis controls
+st.sidebar.header("Analysis settings")
+significance_threshold = st.sidebar.slider(
+    "Significance threshold (p-value)", min_value=0.01, max_value=0.20,
+    value=significance_treshold, step=0.01)
+min_group_size = st.sidebar.number_input(
+    "Minimum records per group (target and control) to test a segment",
+    min_value=0, value=50, step=10)
 
 # Extract the TGCG column from the dataset (values already lowercased by the loader)
 tgcg_column = information_dataset.loc[information_dataset['METATYPE'] == 'TGCG', 'COLUMN'].values[0]
@@ -44,23 +59,21 @@ def overall_results(token):
 
 # Calculate metrics for each KPI
 result_df = overall_results(token)
-result_df = result_df.map(format_float)
 
-# Apply highlight function
-highlighted_df = result_df.style.apply(highlight_pvalue, axis=1)
+st.write(style_metrics(result_df, significance_threshold))
 
-st.write(highlighted_df)
-
-# Add a download link for CSV
-st.markdown(download_csv_link(result_df, "results.csv"), unsafe_allow_html=True)
+# Add a download button for CSV
+st.download_button("Download this table", result_df.to_csv(index=False).encode('utf-8'),
+                   file_name="results.csv", mime="text/csv")
 
 # Segment fields
 st.markdown(f"# Discrete Segments with significant results")
 
 
 @st.cache_data
-def discrete_segment_results(token):
-    """Significant (segment value, KPI) combinations, or None when there are none."""
+def discrete_segment_results(token, threshold, min_size):
+    """Significant (segment value, KPI) combinations and the number of segment
+    values skipped for having fewer than min_size target or control records."""
     dataset, information_dataset = load_processed_data(token)
     tgcg_column = information_dataset.loc[information_dataset['METATYPE'] == 'TGCG', 'COLUMN'].values[0]
     kpi_columns = information_dataset.loc[information_dataset['METATYPE'] == 'KPI', 'COLUMN'].values
@@ -69,11 +82,19 @@ def discrete_segment_results(token):
                                                   'COLUMN'].values
 
     all_results = []
+    skipped = 0
     for seg_column in segmentation_columns:
         for unique_value in dataset[seg_column].unique():
             subset = dataset[dataset[seg_column] == unique_value]
+
+            # the z-test is unreliable on tiny groups: skip segments below min_size
+            group_counts = subset[tgcg_column].value_counts()
+            if group_counts.get('target', 0) < min_size or group_counts.get('control', 0) < min_size:
+                skipped += 1
+                continue
+
             result_df = calculate_metrics(subset, kpi_columns, tgcg_column)
-            result_df = result_df[result_df['P-value'] <= significance_treshold]
+            result_df = result_df[result_df['P-value'] <= threshold]
             if not result_df.empty:
                 # Add 'Segmentation Column' to result_df
                 result_df.insert(0, 'Segmentation Column', seg_column)
@@ -83,20 +104,22 @@ def discrete_segment_results(token):
                 all_results.append(result_df)
 
     if not all_results:
-        return None
+        return None, skipped
 
     all_results_df = pd.concat(all_results)
     # Reset the DataFrame's index to ensure it is unique
     all_results_df.reset_index(drop=True, inplace=True)
-    return all_results_df
+    return all_results_df, skipped
 
 
-all_results_df = discrete_segment_results(token)
+all_results_df, skipped_segments = discrete_segment_results(token, significance_threshold, min_group_size)
 if all_results_df is not None:
     #apply the style and display de df
-    st.dataframe(all_results_df.style.apply(highlight_pvalue, axis=1))
+    st.dataframe(style_metrics(all_results_df, significance_threshold))
 else:
     st.info("No discrete segments with statistically significant results were found.")
+if skipped_segments:
+    st.caption(f"{skipped_segments} segment value(s) not tested: fewer than {min_group_size} target or control records.")
 
 
 ##seccion variables segmentacion continuas
@@ -104,7 +127,7 @@ else:
 
 
 @st.cache_data
-def continuous_interval_results(token):
+def continuous_interval_results(token, threshold, min_size):
     """Best/worst intervals of the continuous segmentation fields (Kadane), significant results only."""
     dataset, information_dataset = load_processed_data(token)
     tgcg_column = information_dataset.loc[information_dataset['METATYPE'] == 'TGCG', 'COLUMN'].values[0]
@@ -142,6 +165,11 @@ def continuous_interval_results(token):
         end_value = concatenated_df.iloc[end_index][seg_column]
 
         filtered_dataset = dataset[(dataset[seg_column] >= start_value) & (dataset[seg_column] <= end_value)]
+
+        # the z-test is unreliable on tiny groups: skip intervals below min_size
+        group_counts = filtered_dataset[tgcg_column].value_counts()
+        if group_counts.get('target', 0) < min_size or group_counts.get('control', 0) < min_size:
+            return
 
         result_df = calculate_metrics2(filtered_dataset, kpi, tgcg_column)
 
@@ -208,21 +236,21 @@ def continuous_interval_results(token):
     if results_df.empty:
         return results_df
 
-    results_df["TG Acceptors"] = results_df["TG Acceptors"].astype(float).round(0).astype(int)
-    results_df["CG Acceptors"] = results_df["CG Acceptors"].astype(float).round(0).astype(int)
+    results_df["TG Acceptors"] = results_df["TG Acceptors"].round().astype(int)
+    results_df["CG Acceptors"] = results_df["CG Acceptors"].round().astype(int)
 
     #exclude non-significant results
-    results_df = results_df[results_df['P-value'] <= significance_treshold]
+    results_df = results_df[results_df['P-value'] <= threshold]
     return results_df
 
 
-results_df = continuous_interval_results(token)
+results_df = continuous_interval_results(token, significance_threshold, min_group_size)
 
 st.markdown(f"# Continuous variables with significant results")
 
 
 if not results_df.empty:
-    st.dataframe(results_df.style.apply(highlight_pvalue, axis=1))
+    st.dataframe(style_metrics(results_df, significance_threshold))
 else:
     st.info("No continuous-variable intervals with statistically significant results were found.")
 

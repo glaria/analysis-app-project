@@ -1,4 +1,5 @@
 import os
+import re
 import pandas as pd
 import numpy as np
 import math
@@ -114,35 +115,70 @@ def get_negative_array(values):
 
 
 ####***Functions used during dataload***####
+_KPI_NAME_PATTERN = re.compile(r'kpi|convers|convert|response|accept|purchase|redeem', re.IGNORECASE)
+
+def _infer_tgcg_column(dataset: pd.DataFrame):
+    """Exact name first, otherwise any column whose values are exactly target/control."""
+    if 'TGCG' in dataset.columns:
+        return 'TGCG'
+    for column in dataset.columns:
+        if dataset[column].dtype == 'object':
+            values = set(dataset[column].dropna().astype(str).str.lower().unique())
+            if 0 < len(values) <= 2 and values <= {'target', 'control'}:
+                return column
+    return None
+
+def _infer_pk_column(dataset: pd.DataFrame, tgcg_column):
+    """Exact name first, otherwise the most-unique integer/string column
+    (>= 99% distinct values). Floats are excluded: near-unique floats are
+    usually measures (spend, scores), not identifiers."""
+    if 'CUSTOMERNUMBER' in dataset.columns:
+        return 'CUSTOMERNUMBER'
+    n = len(dataset)
+    if n == 0:
+        return None
+    pk_column, best_ratio = None, 0.99
+    for column in dataset.columns:
+        if column == tgcg_column:
+            continue
+        if pd.api.types.is_integer_dtype(dataset[column]) or dataset[column].dtype == 'object':
+            ratio = dataset[column].nunique() / n
+            if ratio >= best_ratio:
+                pk_column, best_ratio = column, ratio
+    return pk_column
+
 def infer_datatypes_and_metatypes(dataset: pd.DataFrame) -> pd.DataFrame:
     info_data = {'COLUMN': [], 'DATATYPE': [], 'METATYPE': []}
 
+    tgcg_column = _infer_tgcg_column(dataset)
+    pk_column = _infer_pk_column(dataset, tgcg_column)
+
     for column in dataset.columns:
         dtype = dataset[column].dtype
+        info_data['COLUMN'].append(column)
 
-        if column == 'CUSTOMERNUMBER':
-            info_data['COLUMN'].append(column)
-            info_data['DATATYPE'].append('NUMERIC')
+        if column == pk_column:
+            info_data['DATATYPE'].append('NUMERIC' if pd.api.types.is_numeric_dtype(dataset[column]) else 'STRING')
             info_data['METATYPE'].append('PK')
-        elif column == 'TGCG':
-            info_data['COLUMN'].append(column)
+        elif column == tgcg_column:
             info_data['DATATYPE'].append('STRING')
             info_data['METATYPE'].append('TGCG')
+        elif dtype == 'bool':
+            info_data['DATATYPE'].append('BOOL')
+            info_data['METATYPE'].append('KPI')
+        elif dtype == 'object':
+            info_data['DATATYPE'].append('STRING')
+            info_data['METATYPE'].append('SF')
+        elif set(dataset[column].dropna().unique()) <= {0, 1} and _KPI_NAME_PATTERN.search(column):
+            # binary numeric column whose name suggests an outcome -> KPI
+            info_data['DATATYPE'].append('NUM_ST')
+            info_data['METATYPE'].append('KPI')
+        elif dataset[column].nunique() < 10:
+            info_data['DATATYPE'].append('NUM_ST')
+            info_data['METATYPE'].append('SF')
         else:
-            info_data['COLUMN'].append(column)
-
-            if dtype == 'bool':
-                info_data['DATATYPE'].append('BOOL')
-                info_data['METATYPE'].append('KPI')
-            elif dtype == 'object':
-                info_data['DATATYPE'].append('STRING')
-                info_data['METATYPE'].append('SF')
-            elif dataset[column].nunique() < 10:
-                info_data['DATATYPE'].append('NUM_ST')
-                info_data['METATYPE'].append('SF')
-            else:
-                info_data['DATATYPE'].append('NUMERIC')
-                info_data['METATYPE'].append('SF')
+            info_data['DATATYPE'].append('NUMERIC')
+            info_data['METATYPE'].append('SF')
 
     inferred_info_dataset = pd.DataFrame(info_data)
     return inferred_info_dataset
@@ -203,59 +239,64 @@ def format_float(value):
     return value
 
 
-def calculate_metrics2(subset, kpi, tgcg_column):
-    """Calculates metrics for a specific KPI."""
+def calculate_metrics(df, kpi_columns, tgcg_column):
+    """Calculates metrics for a list of KPIs.
+    All columns are numeric; formatting happens at display time (style_metrics)."""
+    tg = df[df[tgcg_column] == 'target']
+    cg = df[df[tgcg_column] == 'control']
+    tg_total = len(tg)
+    cg_total = len(cg)
+
     metrics = []
-    tg_acceptors = subset.loc[subset[tgcg_column] == 'target', kpi].sum()
-    tg_total = len(subset.loc[subset[tgcg_column] == 'target'])
-    tg_acceptance = round((tg_acceptors / tg_total)*100,2) if tg_total != 0 else 0
+    for kpi in kpi_columns:
+        tg_acceptors = tg[kpi].sum()
+        tg_acceptance = round((tg_acceptors / tg_total)*100,2) if tg_total != 0 else 0
 
-    cg_acceptors = subset.loc[subset[tgcg_column] == 'control', kpi].sum()
-    cg_total = len(subset.loc[subset[tgcg_column] == 'control'])
-    cg_acceptance = round((cg_acceptors / cg_total) * 100, 2) if cg_total != 0 else 0
+        cg_acceptors = cg[kpi].sum()
+        cg_acceptance = round((cg_acceptors / cg_total) * 100, 2) if cg_total != 0 else 0
 
-    uplift = tg_acceptance - cg_acceptance
-    p_value = proportions_p_value(float(tg_acceptors)/float(tg_total), float(cg_acceptors)/float(cg_total), float(tg_total), float(cg_total)) if tg_total != 0 and cg_total != 0 else None
+        uplift = tg_acceptance - cg_acceptance
+        p_value = proportions_p_value(tg_acceptors/tg_total, cg_acceptors/cg_total, tg_total, cg_total) if tg_total != 0 and cg_total != 0 else None
 
-    metrics.append([kpi, "{:.2f}".format(tg_acceptors), "{:.2f}".format(tg_acceptance), "{:.2f}".format(cg_acceptors), "{:.2f}".format(cg_acceptance), "{:.2f}".format(uplift), p_value])
+        metrics.append([kpi, float(tg_acceptors), tg_acceptance, float(cg_acceptors), cg_acceptance, uplift, p_value])
+
     result_df = pd.DataFrame(metrics, columns=["KPI", "TG Acceptors", "TG Acceptance (%)", "CG Acceptors", "CG Acceptance (%)", "Uplift (%)", "P-value"])
     result_df['P-value'] = pd.to_numeric(result_df['P-value'], errors='coerce')
+
     return result_df
 
+def calculate_metrics2(subset, kpi, tgcg_column):
+    """Single-KPI wrapper around calculate_metrics (kept for backwards compatibility)."""
+    return calculate_metrics(subset, [kpi], tgcg_column)
 
-def highlight_pvalue(row):
-    """Highlights rows with P-value <= significance_treshold."""
-    if float(row["P-value"]) <= significance_treshold and float(row["Uplift (%)"]) >= 0:
+
+def highlight_pvalue(row, threshold=None):
+    """Highlights rows with P-value <= threshold (default: significance_treshold)."""
+    if threshold is None:
+        threshold = significance_treshold
+    if float(row["P-value"]) <= threshold and float(row["Uplift (%)"]) >= 0:
         return ["background-color: #CCFFCC"] * len(row)
-    elif float(row["P-value"]) <= significance_treshold and float(row["Uplift (%)"]) < 0:
+    elif float(row["P-value"]) <= threshold and float(row["Uplift (%)"]) < 0:
         return ["background-color: #FFEAEA"] * len(row)
     else:
         return [""] * len(row)
 
-def calculate_metrics(df, kpi_columns, tgcg_column):
-    """Calculates metrics for a list of KPIs."""
-    metrics = []
-    for kpi in kpi_columns:
-        tg = df[df[tgcg_column] == 'target']
-        cg = df[df[tgcg_column] == 'control']
 
-        tg_acceptors = tg[kpi].sum()
-        tg_total = len(tg)
-        tg_acceptance = round((tg_acceptors / tg_total)*100,2) if tg_total != 0 else 0
+_METRIC_FORMATS = {
+    "TG Acceptors": "{:.2f}",
+    "TG Acceptance (%)": "{:.2f}",
+    "CG Acceptors": "{:.2f}",
+    "CG Acceptance (%)": "{:.2f}",
+    "Uplift (%)": "{:.2f}",
+    "P-value": "{:.4f}",
+}
 
-        cg_acceptors = cg[kpi].sum()
-        cg_total = len(cg)
-        cg_acceptance = round((cg_acceptors / cg_total) * 100, 2) if cg_total != 0 else 0
-
-        uplift = tg_acceptance - cg_acceptance
-        p_value = proportions_p_value(tg_acceptors/tg_total, cg_acceptors/cg_total, tg_total, cg_total)
-
-        metrics.append([kpi, "{:.2f}".format(tg_acceptors), "{:.2f}".format(tg_acceptance), "{:.2f}".format(cg_acceptors), "{:.2f}".format(cg_acceptance), "{:.2f}".format(uplift), p_value])
-
-    result_df = pd.DataFrame(metrics, columns=["KPI", "TG Acceptors", "TG Acceptance (%)", "CG Acceptors", "CG Acceptance (%)", "Uplift (%)", "P-value"])
-    result_df['P-value'] = pd.to_numeric(result_df['P-value'], errors='coerce')
-
-    return result_df
+def style_metrics(df, threshold=None):
+    """Significance highlighting + display formatting for a metrics DataFrame.
+    Only float columns are formatted, so integer Acceptors columns stay integers."""
+    formats = {c: f for c, f in _METRIC_FORMATS.items()
+               if c in df.columns and pd.api.types.is_float_dtype(df[c])}
+    return df.style.apply(highlight_pvalue, axis=1, threshold=threshold).format(formats, na_rep="")
 
 def filter_and_display(df, pvalue_threshold, seg_column, unique_value):
     """Filters and displays the results."""
