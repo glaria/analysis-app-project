@@ -1,4 +1,5 @@
 # Import required libraries
+import os
 import streamlit as st
 import numpy as np
 import base64
@@ -159,6 +160,7 @@ if data is not None and len(data.columns) > 1:
             st.session_state.store['uploaded_data'] = st.session_state.uploaded_data
             st.session_state.store['user_defined_info_dataset'] = st.session_state.user_defined_info_dataset
             
+            os.makedirs("pages/temp", exist_ok=True)  # not tracked by git, may not exist on a fresh clone
             try:
                 st.session_state.uploaded_data.to_parquet("pages/temp/uploaded_data.parquet", index=False)
                 st.session_state.user_defined_info_dataset.to_parquet("pages/temp/user_defined_info_dataset.parquet", index=False)
