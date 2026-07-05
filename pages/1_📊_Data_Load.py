@@ -41,24 +41,23 @@ def process_file(uploaded_file, separator):
 
 # Process the uploaded file and convert it into a pandas DataFrame
 data = process_file(uploaded_file, csv_separator)
-try:
-    if data is not None and len(data.columns) > 1:
-        # Reload only when the file (or separator) changes, so in-session edits
-        # such as duplicate removal are not overwritten on every rerun
-        file_id = (uploaded_file.name, uploaded_file.size, csv_separator)
-        if st.session_state.get("uploaded_file_id") != file_id:
-            st.session_state.uploaded_file_id = file_id
-            st.session_state.uploaded_data = data
-except Exception:
-    pass
-try: #show the dataframe but if no file loaded we hide the error
-    st.dataframe(data.head(5))
-except Exception:
-    pass
-# Infer data types of the loaded dataframe
-if data is not None and len(data.columns) > 1:
 
-    inferred_info_dataset = infer_datatypes_and_metatypes(data)
+if data is not None and len(data.columns) <= 1:
+    st.error("Only one column was detected. Check that the CSV separator is correct.")
+
+if data is not None and len(data.columns) > 1:
+    # Reload only when the file (or separator) changes, so in-session edits
+    # such as duplicate removal are not overwritten on every rerun
+    file_id = (uploaded_file.name, uploaded_file.size, csv_separator)
+    if st.session_state.get("uploaded_file_id") != file_id:
+        st.session_state.uploaded_file_id = file_id
+        st.session_state.uploaded_data = data
+
+    # Preview the session copy, which reflects in-session edits such as duplicate removal
+    st.dataframe(st.session_state.uploaded_data.head(5))
+
+    # Infer data types of the loaded dataframe
+    inferred_info_dataset = infer_datatypes_and_metatypes(st.session_state.uploaded_data)
 
     # Create an empty container to display the data types and meta types
     data_types_metatypes_container = st.empty()
@@ -137,10 +136,7 @@ if data is not None and len(data.columns) > 1:
                 else:
                     warning_message_container.markdown(f'<span style="color:red">Warning: Duplicate values found in the unique key column ({pk_column})!!</span>', unsafe_allow_html=True)
 
-    # Validate data types and meta types
-    is_valid = validate_datatypes_and_metatypes(data, user_defined_info_dataset)
-
-    # remove null values based on the data types in `user_defined_info_dataset` 
+    # remove null values based on the data types in `user_defined_info_dataset`
     for index, row in st.session_state.user_defined_info_dataset.iterrows():
         column = row['COLUMN']
         datatype = row['DATATYPE']
@@ -150,7 +146,10 @@ if data is not None and len(data.columns) > 1:
         elif datatype == 'NUMERIC' or datatype == 'NUM_ST':
             st.session_state.uploaded_data[column] = st.session_state.uploaded_data[column].fillna(0)
 
-    if is_valid:
+    # Validate the session copy (the frame that will actually be written on Process)
+    validation_errors = validate_datatypes_and_metatypes(st.session_state.uploaded_data, user_defined_info_dataset)
+
+    if not validation_errors:
         if st.button("Process Data"):
             st.success("Data processing started!")
             url = 'Analysis_Results'
@@ -169,5 +168,6 @@ if data is not None and len(data.columns) > 1:
                 st.session_state.uploaded_data.to_csv("pages/temp/uploaded_data.csv", sep = ',', mode = 'w+', index = False)
                 st.session_state.user_defined_info_dataset.to_csv("pages/temp/user_defined_info_dataset.csv", sep = ',', mode = 'w+', index = False)
     else:
-        st.error("There is an issue with the data types or meta types. Please review and correct them.")
+        st.error("Please fix the following before processing:\n" +
+                 "\n".join(f"- {error}" for error in validation_errors))
 

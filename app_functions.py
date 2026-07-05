@@ -198,9 +198,23 @@ def _is_bool_column(col: pd.Series) -> bool:
         return True
     return pd.api.types.infer_dtype(col, skipna=True) in ('boolean', 'empty')
 
-def validate_datatypes_and_metatypes(dataset: pd.DataFrame, info_dataset: pd.DataFrame) -> bool:
+def validate_datatypes_and_metatypes(dataset: pd.DataFrame, info_dataset: pd.DataFrame) -> list:
+    """Returns a list of human-readable problems; an empty list means the
+    definitions are valid and the data can be processed."""
     datatype_values = ['BOOL', 'STRING', 'NUM_ST', 'NUMERIC']
     metatype_values = ['TGCG', 'PK', 'KPI', 'SF']
+    errors = []
+
+    # Structural checks: the analysis pages need exactly one TGCG column,
+    # at least one KPI, and at most one PK
+    metatype_counts = info_dataset['METATYPE'].value_counts()
+    tgcg_count = metatype_counts.get('TGCG', 0)
+    if tgcg_count != 1:
+        errors.append(f"Exactly one column must have meta type TGCG (target/control flag); found {tgcg_count}.")
+    if metatype_counts.get('KPI', 0) == 0:
+        errors.append("At least one column must have meta type KPI (the campaign outcome to measure).")
+    if metatype_counts.get('PK', 0) > 1:
+        errors.append(f"At most one column can have meta type PK (unique key); found {metatype_counts.get('PK', 0)}.")
 
     for index, row in info_dataset.iterrows():
         column = row['COLUMN']
@@ -208,29 +222,35 @@ def validate_datatypes_and_metatypes(dataset: pd.DataFrame, info_dataset: pd.Dat
         metatype = row['METATYPE']
 
         if datatype not in datatype_values or metatype not in metatype_values:
-            return False
+            errors.append(f"Column '{column}': unknown data type '{datatype}' or meta type '{metatype}'.")
+            continue
 
         col = dataset[column]
 
         if metatype == 'TGCG' and not col.dropna().astype(str).str.lower().isin(['target', 'control']).all():
-            return False
+            errors.append(f"Column '{column}' is marked TGCG but contains values other than 'target'/'control'.")
 
         if datatype == 'BOOL' and not _is_bool_column(col):
-            return False
+            errors.append(f"Column '{column}' is marked BOOL but contains non-boolean values.")
 
         if datatype == 'STRING' and not _is_string_column(col):
-            return False
+            errors.append(f"Column '{column}' is marked STRING but contains non-text values.")
 
         if datatype == 'NUM_ST' and not (col.nunique() < 10 and _is_numeric_column(col)):
-            return False
+            errors.append(f"Column '{column}' is marked NUM_ST but is not numeric with fewer than 10 distinct values.")
 
         if datatype == 'NUMERIC' and not _is_numeric_column(col):
-            return False
+            errors.append(f"Column '{column}' is marked NUMERIC but contains non-numeric values.")
 
-        if metatype == 'KPI' and not _is_numeric_column(col):
-            return False
+        if metatype == 'KPI':
+            # KPIs are treated as acceptance flags everywhere (acceptors = sum,
+            # acceptance = mean), so they must be binary 0/1
+            if not _is_numeric_column(col):
+                errors.append(f"Column '{column}' is marked KPI but contains non-numeric values.")
+            elif not set(col.dropna().unique()) <= {0, 1}:
+                errors.append(f"Column '{column}' is marked KPI but is not binary: KPIs must only contain 0/1 (or True/False) values.")
 
-    return True
+    return errors
 ###***    ***###
 
 def format_float(value):

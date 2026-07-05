@@ -71,9 +71,11 @@ st.markdown(f"# Discrete Segments with significant results")
 
 
 @st.cache_data
-def discrete_segment_results(token, threshold, min_size):
-    """Significant (segment value, KPI) combinations and the number of segment
-    values skipped for having fewer than min_size target or control records."""
+def discrete_segment_results(token, min_size):
+    """All (segment value, KPI) combinations and the number of segment values
+    skipped for having fewer than min_size target or control records.
+    The p-value filter is applied outside this function, so moving the
+    significance slider does not re-run the scan."""
     dataset, information_dataset = load_processed_data(token)
     tgcg_column = information_dataset.loc[information_dataset['METATYPE'] == 'TGCG', 'COLUMN'].values[0]
     kpi_columns = information_dataset.loc[information_dataset['METATYPE'] == 'KPI', 'COLUMN'].values
@@ -94,7 +96,6 @@ def discrete_segment_results(token, threshold, min_size):
                 continue
 
             result_df = calculate_metrics(subset, kpi_columns, tgcg_column)
-            result_df = result_df[result_df['P-value'] <= threshold]
             if not result_df.empty:
                 # Add 'Segmentation Column' to result_df
                 result_df.insert(0, 'Segmentation Column', seg_column)
@@ -112,10 +113,15 @@ def discrete_segment_results(token, threshold, min_size):
     return all_results_df, skipped
 
 
-all_results_df, skipped_segments = discrete_segment_results(token, significance_threshold, min_group_size)
+all_results_df, skipped_segments = discrete_segment_results(token, min_group_size)
 if all_results_df is not None:
+    # keep only the significant rows (cheap: the scan itself is cached above)
+    significant_df = all_results_df[all_results_df['P-value'] <= significance_threshold].reset_index(drop=True)
+else:
+    significant_df = None
+if significant_df is not None and not significant_df.empty:
     #apply the style and display de df
-    st.dataframe(style_metrics(all_results_df, significance_threshold))
+    st.dataframe(style_metrics(significant_df, significance_threshold))
 else:
     st.info("No discrete segments with statistically significant results were found.")
 if skipped_segments:
@@ -127,8 +133,10 @@ if skipped_segments:
 
 
 @st.cache_data
-def continuous_interval_results(token, threshold, min_size):
-    """Best/worst intervals of the continuous segmentation fields (Kadane), significant results only."""
+def continuous_interval_results(token, min_size):
+    """Best/worst intervals of the continuous segmentation fields (Kadane).
+    The p-value filter is applied outside this function, so moving the
+    significance slider does not re-run the scan."""
     dataset, information_dataset = load_processed_data(token)
     tgcg_column = information_dataset.loc[information_dataset['METATYPE'] == 'TGCG', 'COLUMN'].values[0]
     kpi_columns = information_dataset.loc[information_dataset['METATYPE'] == 'KPI', 'COLUMN'].values
@@ -238,13 +246,13 @@ def continuous_interval_results(token, threshold, min_size):
 
     results_df["TG Acceptors"] = results_df["TG Acceptors"].round().astype(int)
     results_df["CG Acceptors"] = results_df["CG Acceptors"].round().astype(int)
-
-    #exclude non-significant results
-    results_df = results_df[results_df['P-value'] <= threshold]
     return results_df
 
 
-results_df = continuous_interval_results(token, significance_threshold, min_group_size)
+results_df = continuous_interval_results(token, min_group_size)
+#exclude non-significant results (cheap: the scan itself is cached above)
+if not results_df.empty:
+    results_df = results_df[results_df['P-value'] <= significance_threshold].reset_index(drop=True)
 
 st.markdown(f"# Continuous variables with significant results")
 
