@@ -1,5 +1,4 @@
 import streamlit as st
-import plotly.express as px
 from app_functions import *
 import itertools
 import plotly.graph_objects as go
@@ -36,15 +35,6 @@ tgcg_column = information_dataset.loc[information_dataset['METATYPE'] == 'TGCG',
 
 tgcg_counts = dataset[tgcg_column].value_counts()
 
-# Create a pie chart with counts and percentages
-fig = px.pie(tgcg_counts.reset_index(), values=tgcg_counts, names = tgcg_column, title="Target vs Control Groups")
-
-# Display the total counts and percentages in the labels
-fig.update_traces(textinfo='label+percent', textfont_size=12, insidetextorientation='radial')
-
-# Show the pie chart in the Streamlit app
-st.plotly_chart(fig)
-
 # Get all KPI columns
 kpi_columns = information_dataset.loc[information_dataset['METATYPE'] == 'KPI', 'COLUMN'].values
 
@@ -60,14 +50,33 @@ def overall_results(token):
 # Calculate metrics for each KPI
 result_df = overall_results(token)
 
-st.write(style_metrics(result_df, significance_threshold))
+# Headline summary: group sizes plus one card per KPI with the overall verdict
+summary_cols = st.columns(2 + len(result_df))
+summary_cols[0].metric("Target group", f"{int(tgcg_counts.get('target', 0)):,}")
+summary_cols[1].metric("Control group", f"{int(tgcg_counts.get('control', 0)):,}")
+for i, (_, row) in enumerate(result_df.iterrows()):
+    significant = row["P-value"] <= significance_threshold
+    summary_cols[2 + i].metric(
+        label=f"{row['KPI']} · TG acceptance",
+        value=f"{row['TG Acceptance (%)']:.2f}%",
+        delta=f"{row['Uplift (%)']:+.2f} pp vs control",
+        delta_color="normal" if significant else "off",
+        help=f"CG acceptance {row['CG Acceptance (%)']:.2f}% · p-value {row['P-value']:.4f}"
+             + ("" if significant else " (not significant at the current threshold)"),
+    )
 
-# Add a download button for CSV
-st.download_button("Download this table", result_df.to_csv(index=False).encode('utf-8'),
-                   file_name="results.csv", mime="text/csv")
+st.caption("In every table, ▲/▼ and the green/red row highlight mark statistically significant "
+           "positive/negative uplift; gray deltas above are not significant. Threshold and "
+           "minimum group size are adjustable in the sidebar.")
 
-# Segment fields
-st.markdown(f"# Discrete Segments with significant results")
+tab_overall, tab_discrete, tab_continuous, tab_cross = st.tabs(
+    ["Overall results", "Discrete segments", "Continuous variables", "Cross-KPI"])
+
+with tab_overall:
+    st.dataframe(style_metrics(result_df, significance_threshold), width="stretch", hide_index=True)
+    # Add a download button for CSV
+    st.download_button("Download this table", result_df.to_csv(index=False).encode('utf-8'),
+                       file_name="results.csv", mime="text/csv")
 
 
 @st.cache_data
@@ -119,13 +128,16 @@ if all_results_df is not None:
     significant_df = all_results_df[all_results_df['P-value'] <= significance_threshold].reset_index(drop=True)
 else:
     significant_df = None
-if significant_df is not None and not significant_df.empty:
-    #apply the style and display de df
-    st.dataframe(style_metrics(significant_df, significance_threshold))
-else:
-    st.info("No discrete segments with statistically significant results were found.")
-if skipped_segments:
-    st.caption(f"{skipped_segments} segment value(s) not tested: fewer than {min_group_size} target or control records.")
+
+with tab_discrete:
+    st.subheader("Discrete segments with significant results")
+    if significant_df is not None and not significant_df.empty:
+        #apply the style and display de df
+        st.dataframe(style_metrics(significant_df, significance_threshold), width="stretch", hide_index=True)
+    else:
+        st.info("No discrete segments with statistically significant results were found.")
+    if skipped_segments:
+        st.caption(f"{skipped_segments} segment value(s) not tested: fewer than {min_group_size} target or control records.")
 
 
 ##seccion variables segmentacion continuas
@@ -295,45 +307,42 @@ def binned_results(token, min_size, n_bins, equal_width):
     return binned_df, skipped
 
 
-st.markdown(f"# Continuous variables")
-
 # Both views are shown so they can be compared directly: the optimal-segment
 # search finds the single best/worst interval of each variable (with no
 # predefined cut points), while the bins show the full response profile.
 
-st.markdown("## Optimal segments")
-st.caption("The interval of each variable with the highest (and lowest) uplift, "
-           "found with no predefined cut points. Significant results only.")
+with tab_continuous:
+    st.subheader("Optimal segments")
+    st.caption("The interval of each variable with the highest (and lowest) uplift, "
+               "found with no predefined cut points. Significant results only.")
 
-results_df = continuous_interval_results(token, min_group_size)
-#exclude non-significant results (cheap: the scan itself is cached above)
-if not results_df.empty:
-    results_df = results_df[results_df['P-value'] <= significance_threshold].reset_index(drop=True)
+    results_df = continuous_interval_results(token, min_group_size)
+    #exclude non-significant results (cheap: the scan itself is cached above)
+    if not results_df.empty:
+        results_df = results_df[results_df['P-value'] <= significance_threshold].reset_index(drop=True)
 
-if not results_df.empty:
-    st.dataframe(style_metrics(results_df, significance_threshold))
-else:
-    st.info("No continuous-variable segments with statistically significant results were found.")
+    if not results_df.empty:
+        st.dataframe(style_metrics(results_df, significance_threshold), width="stretch", hide_index=True)
+    else:
+        st.info("No continuous-variable segments with statistically significant results were found.")
 
-st.markdown("## Bins")
-st.caption("Each variable split into bins, all bins shown so the response profile is visible: "
-           "green rows are significant positive uplift, red rows significant negative.")
+    st.subheader("Bins")
+    st.caption("Each variable split into bins, all bins shown so the response profile is visible: "
+               "green rows are significant positive uplift, red rows significant negative.")
 
-bin_col1, bin_col2 = st.columns(2)
-n_bins = bin_col1.number_input("Number of bins", min_value=2, max_value=20, value=5, step=1)
-bin_kind = bin_col2.radio("Bin type", ["Equal-size (quantiles)", "Equal-width"], horizontal=True)
+    bin_col1, bin_col2 = st.columns(2)
+    n_bins = bin_col1.number_input("Number of bins", min_value=2, max_value=20, value=5, step=1)
+    bin_kind = bin_col2.radio("Bin type", ["Equal-size (quantiles)", "Equal-width"], horizontal=True)
 
-binned_df, skipped_bins = binned_results(token, min_group_size, int(n_bins), bin_kind == "Equal-width")
-if binned_df is not None:
-    st.dataframe(style_metrics(binned_df, significance_threshold))
-else:
-    st.info("No bins could be tested (no continuous segmentation fields, or all bins below the minimum group size).")
-if skipped_bins:
-    st.caption(f"{skipped_bins} bin(s) not tested: fewer than {min_group_size} target or control records.")
+    binned_df, skipped_bins = binned_results(token, min_group_size, int(n_bins), bin_kind == "Equal-width")
+    if binned_df is not None:
+        st.dataframe(style_metrics(binned_df, significance_threshold), width="stretch", hide_index=True)
+    else:
+        st.info("No bins could be tested (no continuous segmentation fields, or all bins below the minimum group size).")
+    if skipped_bins:
+        st.caption(f"{skipped_bins} bin(s) not tested: fewer than {min_group_size} target or control records.")
 
 ##fin seccion variables segmentacion continuas
-
-st.markdown(f"# Cross-KPI results")
 
 
 @st.cache_data
@@ -375,43 +384,45 @@ def cross_kpi_matrix(token):
 
 matrix_df = cross_kpi_matrix(token)
 
-# Display the matrix in the user interface
-st.write(matrix_df)
+with tab_cross:
+    st.subheader("Relative uplift between KPI outcomes")
+    st.caption("Each cell is the relative uplift (%) of the customers with both the row "
+               "and the column outcome. Green = positive, red = negative.")
 
-# Define colors for the heatmap: green for positive values, red for negative values.
-colors = ['red', 'lightgray', 'green']
+    # Soft diverging colorscale centered on 0: red for negative, green for positive
+    colors = [[0.0, "#C0392B"], [0.5, "#F4F4F4"], [1.0, "#1E8449"]]
 
-# First we convert the values to numeric, forcing non-numerics to NaN
-values = pd.to_numeric(matrix_df.values.flatten(), errors='coerce').reshape(matrix_df.values.shape)
+    # First we convert the values to numeric, forcing non-numerics to NaN
+    values = pd.to_numeric(matrix_df.values.flatten(), errors='coerce').reshape(matrix_df.values.shape)
 
-# Now we replace NaNs with 0
-values = np.where(np.isnan(values), 0, values)
+    # Now we replace NaNs with 0
+    values = np.where(np.isnan(values), 0, values)
 
-# Convert numeric values to strings with two decimal places
-text_values = np.round(values, 0).astype(int).astype(str)
-# Append '%' to each individual item
-text = [f"{val}%" for val in text_values.flatten()]
-# Reshape the array
-text = np.array(text).reshape(values.shape)
+    # Convert numeric values to strings with two decimal places
+    text_values = np.round(values, 0).astype(int).astype(str)
+    # Append '%' to each individual item
+    text = [f"{val}%" for val in text_values.flatten()]
+    # Reshape the array
+    text = np.array(text).reshape(values.shape)
 
-fig = go.Figure(data=go.Heatmap(
-    z=values,
-    x=matrix_df.columns,
-    y=matrix_df.index[::-1],  # Reverse the order of the index for the heatmap
-    colorscale=colors,
-    zmid=0,
-    text=text,
-    texttemplate="%{text}",
-    textfont={"size": 10},
-    hoverongaps = False
-))
+    fig = go.Figure(data=go.Heatmap(
+        z=values,
+        x=matrix_df.columns,
+        y=matrix_df.index[::-1],  # Reverse the order of the index for the heatmap
+        colorscale=colors,
+        zmid=0,
+        text=text,
+        texttemplate="%{text}",
+        textfont={"size": 12},
+        hoverongaps = False
+    ))
 
-# Adjust the layout of the figure.
-fig.update_layout(
-    title='Heatmap of Relative Uplift',
-    xaxis_nticks=len(matrix_df.columns),
-    yaxis_nticks=len(matrix_df.index)
-)
+    # Adjust the layout of the figure.
+    fig.update_layout(
+        xaxis_nticks=len(matrix_df.columns),
+        yaxis_nticks=len(matrix_df.index),
+        height=max(450, 90 * len(matrix_df.index)),
+    )
 
-# Display the figure in the Streamlit user interface.
-st.plotly_chart(fig)
+    # Display the figure in the Streamlit user interface.
+    st.plotly_chart(fig, width="stretch")

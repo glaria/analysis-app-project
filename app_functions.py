@@ -295,9 +295,9 @@ def highlight_pvalue(row, threshold=None):
     if threshold is None:
         threshold = significance_treshold
     if float(row["P-value"]) <= threshold and float(row["Uplift (%)"]) >= 0:
-        return ["background-color: #CCFFCC"] * len(row)
+        return ["background-color: #E6F4EA"] * len(row)
     elif float(row["P-value"]) <= threshold and float(row["Uplift (%)"]) < 0:
-        return ["background-color: #FFEAEA"] * len(row)
+        return ["background-color: #FDEBEC"] * len(row)
     else:
         return [""] * len(row)
 
@@ -313,7 +313,16 @@ _METRIC_FORMATS = {
 
 def style_metrics(df, threshold=None):
     """Significance highlighting + display formatting for a metrics DataFrame.
+    A leading marker column (▲ significant positive / ▼ significant negative)
+    carries the significance signal for readers who can't rely on the row color.
     Only float columns are formatted, so integer Acceptors columns stay integers."""
+    if threshold is None:
+        threshold = significance_treshold
+    df = df.copy()
+    significant = pd.to_numeric(df["P-value"], errors="coerce") <= threshold
+    positive = pd.to_numeric(df["Uplift (%)"], errors="coerce") >= 0
+    df.insert(0, " ", np.where(significant & positive, "▲",
+                               np.where(significant & ~positive, "▼", "")))
     formats = {c: f for c, f in _METRIC_FORMATS.items()
                if c in df.columns and pd.api.types.is_float_dtype(df[c])}
     return df.style.apply(highlight_pvalue, axis=1, threshold=threshold).format(formats, na_rep="")

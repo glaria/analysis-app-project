@@ -59,58 +59,31 @@ if data is not None and len(data.columns) > 1:
     # Infer data types of the loaded dataframe
     inferred_info_dataset = infer_datatypes_and_metatypes(st.session_state.uploaded_data)
 
-    # Create an empty container to display the data types and meta types
-    data_types_metatypes_container = st.empty()
-    data_types_metatypes_container.write("Data types and meta types:")
-    # Function to display the data types and meta types in the container
-    def display_data_types_metatypes(info_dataset):
-
-        data_types_metatypes_container.write(info_dataset)
-
-    # Display the inferred data types and meta types
-    display_data_types_metatypes(inferred_info_dataset)
-
-    # Create dropdown menus for users to manually define data types and meta types
-    st.sidebar.header("Define data types and meta types")
-    user_defined_info_data = {'COLUMN': [], 'DATATYPE': [], 'METATYPE': []}
-
-    for index, row in inferred_info_dataset.iterrows():
-        column = row['COLUMN']
-        inferred_datatype = row['DATATYPE']
-        inferred_metatype = row['METATYPE']
-
-        # Create two columns to display the dropdown menus side by side
-        col1, col2 = st.sidebar.columns(2)
-
-        user_datatype = col1.selectbox(
-            f"Data Type for {column}",
-            options=['BOOL', 'STRING', 'NUM_ST', 'NUMERIC'],
-            index=['BOOL', 'STRING', 'NUM_ST', 'NUMERIC'].index(inferred_datatype),
-            key=f"{column}_datatype"
-        )
-
-        user_metatype = col2.selectbox(
-            f"Meta Type for {column}",
-            options=['TGCG', 'PK', 'KPI', 'SF'],
-            index=['TGCG', 'PK', 'KPI', 'SF'].index(inferred_metatype),
-            key=f"{column}_metatype"
-        )
-
-        user_defined_info_data['COLUMN'].append(column)
-        user_defined_info_data['DATATYPE'].append(user_datatype)
-        user_defined_info_data['METATYPE'].append(user_metatype)
-
-    # Update the displayed data types and meta types when the user makes changes
-    user_defined_info_dataset = pd.DataFrame(user_defined_info_data)
+    # Editable table for the users to manually define data types and meta types.
+    # Keyed by file_id so edits survive reruns but reset when a new file is loaded.
+    st.subheader("Define data types and meta types")
+    st.caption("Review the inferred role of each column and correct it if needed.")
+    user_defined_info_dataset = st.data_editor(
+        inferred_info_dataset,
+        hide_index=True,
+        width="stretch",
+        column_config={
+            'COLUMN': st.column_config.TextColumn("Column", disabled=True),
+            'DATATYPE': st.column_config.SelectboxColumn(
+                "Data type", options=['BOOL', 'STRING', 'NUM_ST', 'NUMERIC'], required=True),
+            'METATYPE': st.column_config.SelectboxColumn(
+                "Meta type", options=['TGCG', 'PK', 'KPI', 'SF'], required=True),
+        },
+        key=f"info_editor_{uploaded_file.name}_{uploaded_file.size}_{csv_separator}",
+    )
 
     #store info_dataset after user actions
     st.session_state.user_defined_info_dataset = user_defined_info_dataset
 
-    display_data_types_metatypes(user_defined_info_dataset)
     pk_condition = user_defined_info_dataset['METATYPE'] == 'PK'
 
     if any(pk_condition):
-        pk_column = inferred_info_dataset.loc[pk_condition, 'COLUMN'].values[0]
+        pk_column = user_defined_info_dataset.loc[pk_condition, 'COLUMN'].values[0]
     else:
         pk_column = None
     

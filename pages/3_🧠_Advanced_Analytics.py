@@ -21,14 +21,16 @@ st.markdown(
     """
     <style>
     .rules-box-top {
-        background-color: #e6ffe6;  # light green
+        background-color: #E6F4EA; /* light green, same as the table highlight */
         border-radius: 5px;
         padding: 10px;
+        margin-bottom: 8px;
     }
     .rules-box-bottom {
-        background-color: #ffe6e6;  # light red
+        background-color: #FDEBEC; /* light red, same as the table highlight */
         border-radius: 5px;
         padding: 10px;
+        margin-bottom: 8px;
     }
     </style>
     """,
@@ -218,9 +220,11 @@ elif num_control_records < 100:
 elif num_target_records < 100:
     st.write("There are fewer than 100 target records. The model cannot be processed.")
 else:
-    for kpi in kpi_columns:
-        st.header(f"KPI: {kpi}")
-
+    st.title("Advanced analytics")
+    # One tab per KPI instead of stacking every model vertically on one page
+    kpi_tabs = st.tabs([f"KPI: {kpi}" for kpi in kpi_columns])
+    for kpi_tab, kpi in zip(kpi_tabs, kpi_columns):
+      with kpi_tab:
         (rules_top25, rules_Bottom25, subgroup_results_df, quartile_results_df,
          scored_dataset, model, qini_y_true, qini_scores) = uplift_model_for_kpi(token, kpi)
 
@@ -238,7 +242,7 @@ else:
             st.markdown(f"<div class='rules-box-bottom'>{rule}</div>", unsafe_allow_html=True)
 
         st.markdown(f"**Results on the best and worst subgroups (holdout)**")
-        st.dataframe(style_metrics(subgroup_results_df))
+        st.dataframe(style_metrics(subgroup_results_df), width="stretch", hide_index=True)
 
         st.divider()
 
@@ -247,7 +251,7 @@ else:
         st.caption("The trained model, its honest evaluation on the holdout, and the scored customer base for targeting the next campaign wave.")
 
         st.markdown("**Uplift of the score quartiles (holdout)**")
-        st.dataframe(style_metrics(quartile_results_df))
+        st.dataframe(style_metrics(quartile_results_df), width="stretch", hide_index=True)
 
         # Qini curve on the holdout: model quality at a glance
         qini_fig, qini_ax, qini_area = qini_curve(qini_y_true, qini_scores)
@@ -265,7 +269,7 @@ else:
         st.markdown("**Scored customers**")
         # Only the first rows are rendered: sending the full scored dataset to
         # the browser freezes the page at this data size
-        st.dataframe(scored_dataset.drop(columns=['top_bottom']).head(1000))
+        st.dataframe(scored_dataset.drop(columns=['top_bottom']).head(1000), width="stretch", hide_index=True)
         st.caption(f"Showing the first 1,000 of {len(scored_dataset):,} scored rows. Use the downloads below for the full data.")
 
         #downloads are built on demand and served as bytes

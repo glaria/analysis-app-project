@@ -4,3 +4,6 @@ __pycache__/
 
 # Session data written by the Data Load page (may contain real customer data)
 pages/temp/
+
+# Local Claude Code state (permissions, dev-server launch config)
+.claude/

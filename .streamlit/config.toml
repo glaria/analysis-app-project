@@ -1,0 +1,11 @@
+# App-wide theme. One accent color (indigo); green/red are reserved for
+# uplift semantics in the result tables and are not used as decoration.
+[theme]
+primaryColor = "#4F46E5"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F4F6FA"
+textColor = "#1F2937"
+font = "sans serif"
+
+[browser]
+gatherUsageStats = false
