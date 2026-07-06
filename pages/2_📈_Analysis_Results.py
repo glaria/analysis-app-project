@@ -249,18 +249,87 @@ def continuous_interval_results(token, min_size):
     return results_df
 
 
+@st.cache_data
+def binned_results(token, min_size, n_bins, equal_width):
+    """Per-bin results for every continuous segmentation field and KPI.
+    Bins are quantiles (equal-size) or equal-width intervals. Returns all bins
+    plus the number of bins skipped for having fewer than min_size target or
+    control records; the p-value filter/highlight happens at display time."""
+    dataset, information_dataset = load_processed_data(token)
+    tgcg_column = information_dataset.loc[information_dataset['METATYPE'] == 'TGCG', 'COLUMN'].values[0]
+    kpi_columns = information_dataset.loc[information_dataset['METATYPE'] == 'KPI', 'COLUMN'].values
+    continuous_segmentation_columns = information_dataset.loc[
+        (information_dataset['METATYPE'] == 'SF') &
+        (information_dataset['DATATYPE'].isin(['NUMERIC'])), 'COLUMN'].values
+
+    all_results = []
+    skipped = 0
+    for seg_column in continuous_segmentation_columns:
+        if equal_width:
+            binned = pd.cut(dataset[seg_column], bins=n_bins)
+        else:
+            # duplicates='drop': columns with many repeated values may yield fewer bins
+            binned = pd.qcut(dataset[seg_column], q=n_bins, duplicates='drop')
+
+        for interval in binned.cat.categories:
+            subset = dataset[binned == interval]
+
+            # the z-test is unreliable on tiny groups: skip bins below min_size
+            group_counts = subset[tgcg_column].value_counts()
+            if group_counts.get('target', 0) < min_size or group_counts.get('control', 0) < min_size:
+                skipped += 1
+                continue
+
+            result_df = calculate_metrics(subset, kpi_columns, tgcg_column)
+            result_df.insert(0, 'Segmentation Field', seg_column)
+            result_df.insert(1, 'Bin', str(interval))
+            result_df.insert(2, 'Lower limit', interval.left)
+            result_df.insert(3, 'Upper limit', interval.right)
+            all_results.append(result_df)
+
+    if not all_results:
+        return None, skipped
+    binned_df = pd.concat(all_results).reset_index(drop=True)
+    binned_df["TG Acceptors"] = binned_df["TG Acceptors"].round().astype(int)
+    binned_df["CG Acceptors"] = binned_df["CG Acceptors"].round().astype(int)
+    return binned_df, skipped
+
+
+st.markdown(f"# Continuous variables")
+
+# Both views are shown so they can be compared directly: the optimal-segment
+# search finds the single best/worst interval of each variable (with no
+# predefined cut points), while the bins show the full response profile.
+
+st.markdown("## Optimal segments")
+st.caption("The interval of each variable with the highest (and lowest) uplift, "
+           "found with no predefined cut points. Significant results only.")
+
 results_df = continuous_interval_results(token, min_group_size)
 #exclude non-significant results (cheap: the scan itself is cached above)
 if not results_df.empty:
     results_df = results_df[results_df['P-value'] <= significance_threshold].reset_index(drop=True)
 
-st.markdown(f"# Continuous variables with significant results")
-
-
 if not results_df.empty:
     st.dataframe(style_metrics(results_df, significance_threshold))
 else:
-    st.info("No continuous-variable intervals with statistically significant results were found.")
+    st.info("No continuous-variable segments with statistically significant results were found.")
+
+st.markdown("## Bins")
+st.caption("Each variable split into bins, all bins shown so the response profile is visible: "
+           "green rows are significant positive uplift, red rows significant negative.")
+
+bin_col1, bin_col2 = st.columns(2)
+n_bins = bin_col1.number_input("Number of bins", min_value=2, max_value=20, value=5, step=1)
+bin_kind = bin_col2.radio("Bin type", ["Equal-size (quantiles)", "Equal-width"], horizontal=True)
+
+binned_df, skipped_bins = binned_results(token, min_group_size, int(n_bins), bin_kind == "Equal-width")
+if binned_df is not None:
+    st.dataframe(style_metrics(binned_df, significance_threshold))
+else:
+    st.info("No bins could be tested (no continuous segmentation fields, or all bins below the minimum group size).")
+if skipped_bins:
+    st.caption(f"{skipped_bins} bin(s) not tested: fewer than {min_group_size} target or control records.")
 
 ##fin seccion variables segmentacion continuas
 

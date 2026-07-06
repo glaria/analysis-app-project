@@ -3,9 +3,9 @@
 A local Streamlit app for measuring the impact of CRM campaigns with a
 target/control setup. Upload the campaign data and the app reports the overall
 uplift per KPI, finds the customer segments with the best and worst response
-(including the optimal intervals of continuous variables, found with a
-Kadane-based search), and trains an uplift model to score customers for the
-next campaign wave.
+(including the optimal segments of continuous variables, found with no
+predefined cut points, plus a classic bin view), and trains an uplift model to
+score customers for the next campaign wave.
 
 ## Running the app
 

@@ -24,8 +24,9 @@ st.markdown(
     consistent, press **Process Data**.
 
     **2. 📈 Analysis Results** — The campaign results: overall uplift per KPI,
-    discrete segments with significant results, the best/worst intervals of the
-    continuous variables, and a cross-KPI heatmap. Rows highlighted in green are
+    discrete segments with significant results, the continuous variables analysed
+    both as optimal best/worst segments and as bins (side by side, easy to
+    compare), and a cross-KPI heatmap. Rows highlighted in green are
     significant positive results; red means significant negative. You can adjust
     the significance threshold and the minimum group size in the sidebar.
 
