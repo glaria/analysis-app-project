@@ -2,41 +2,71 @@ import streamlit as st
 
 st.set_page_config(
     page_title="Campaign Analysis App",
-    page_icon="👋",
+    page_icon="📊",
+    layout="wide",
 )
 
-st.write("# Campaign Analysis App 👋")
-
+st.title("📊 Campaign Analysis App")
 st.markdown(
-    """
-    This app measures whether a CRM campaign actually worked. You upload the
-    campaign data — customers split into a **target group** (received the campaign)
-    and a **control group** (didn't) — and the app tells you the overall uplift,
-    which customer segments responded best and worst, and which customers to
-    contact in the next wave.
+    "Measure whether a CRM campaign actually worked. Upload the campaign data — "
+    "customers split into a **target group** (received the campaign) and a "
+    "**control group** (didn't) — and get the overall uplift, the customer "
+    "segments that responded best and worst, and the customers to contact in "
+    "the next wave."
+)
 
-    ### How to use it
+# The three steps of the workflow, in order, each linking to its page
+step1, step2, step3 = st.columns(3)
 
-    Work through the pages in the sidebar, in order:
+with step1, st.container(border=True):
+    st.subheader("1 · Data load")
+    st.markdown(
+        "Upload your CSV or Excel file. The app guesses the role of each "
+        "column and lets you correct it in an editable table. When everything "
+        "is consistent, press **Process Data**."
+    )
+    st.page_link("pages/1_📊_Data_Load.py", label="Open Data Load", icon="📊")
 
-    **1. 📊 Data Load** — Upload your CSV or Excel file. The app guesses the role
-    of each column and lets you correct it in the sidebar. When everything is
-    consistent, press **Process Data**.
+with step2, st.container(border=True):
+    st.subheader("2 · Campaign results")
+    st.markdown(
+        "The overall uplift per KPI, the discrete segments with significant "
+        "results, the continuous variables as optimal segments and as bins, "
+        "and a cross-KPI heatmap."
+    )
+    st.page_link("pages/2_📈_Analysis_Results.py", label="Open Analysis Results", icon="📈")
 
-    **2. 📈 Analysis Results** — The campaign results: overall uplift per KPI,
-    discrete segments with significant results, the continuous variables analysed
-    both as optimal best/worst segments and as bins (side by side, easy to
-    compare), and a cross-KPI heatmap. Rows highlighted in green are
-    significant positive results; red means significant negative. You can adjust
-    the significance threshold and the minimum group size in the sidebar.
+with step3, st.container(border=True):
+    st.subheader("3 · Advanced analytics")
+    st.markdown(
+        "An uplift model per KPI: best and worst subgroups as readable rules, "
+        "honest evaluation on a 30% holdout, and a scored customer base with "
+        "a Top-25% targeting export."
+    )
+    st.page_link("pages/3_🧠_Advanced_Analytics.py", label="Open Advanced Analytics", icon="🧠")
 
-    **3. 🧠 Advanced Analytics** — An uplift model trained per KPI. It extracts
-    the best and worst subgroups as human-readable rules, evaluates the model
-    honestly on a 30% holdout (Qini curve, score quartiles), and lets you download
-    the scored customer base and a Top-25% targeting list for the next campaign wave.
 
-    ### What your file needs
+@st.cache_data
+def sample_dataset_bytes():
+    with open("datasets/fetch_hillstrom_dataset.csv", "rb") as f:
+        return f.read()
 
+
+st.subheader("Try it without your own data")
+st.markdown(
+    "Download the sample dataset (the classic Hillstrom e-mail campaign) and "
+    "load it in the Data Load page."
+)
+st.download_button(
+    "Download the Hillstrom sample dataset",
+    sample_dataset_bytes(),
+    file_name="fetch_hillstrom_dataset.csv",
+    mime="text/csv",
+)
+
+with st.expander("What your file needs"):
+    st.markdown(
+        """
     One row per customer. Every column gets a **meta type**:
 
     | Meta type | Meaning | Requirements |
@@ -49,12 +79,5 @@ st.markdown(
     and a **data type**: `BOOL`, `STRING`, `NUMERIC`, or `NUM_ST` (numeric with
     fewer than 10 distinct values, treated as discrete). Missing values are filled
     automatically (`NONE` for text, `0` for numbers).
-
-    Want to try it without your own data? There is a sample dataset in
-    `datasets/fetch_hillstrom_dataset.csv` (the classic Hillstrom e-mail campaign).
-
-    👈 **Start with the Data Load page.**
-"""
-)
-
-st.markdown("Go to the [Data Load page](Data_Load)")
+    """
+    )

@@ -1,10 +1,11 @@
 import streamlit as st
-from matplotlib import pyplot as plt
-import lightgbm as lgb
+import plotly.graph_objects as go
 from lightgbm import LGBMRegressor
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.model_selection import train_test_split
 from app_functions import *
+
+st.set_page_config(page_title="Advanced Analytics · Campaign Analysis App", page_icon="🧠", layout="wide")
 
 # This page merges the former Advanced Analytics and Modelling pages.
 # It is organised in two clearly separated sections per KPI:
@@ -32,10 +33,22 @@ st.markdown(
         padding: 10px;
         margin-bottom: 8px;
     }
+    .rules-samples {
+        float: right;
+        background-color: rgba(0, 0, 0, 0.07);
+        border-radius: 10px;
+        padding: 1px 10px;
+        margin-left: 12px;
+        font-size: 0.85em;
+        color: #374151;
+        white-space: nowrap;
+    }
     </style>
     """,
     unsafe_allow_html=True,
 )
+
+st.title("Advanced analytics")
 
 # dataset and information_dataset come from the cached loader; the token
 # invalidates every cached computation when the Data Load page writes new data
@@ -220,7 +233,6 @@ elif num_control_records < 100:
 elif num_target_records < 100:
     st.write("There are fewer than 100 target records. The model cannot be processed.")
 else:
-    st.title("Advanced analytics")
     # One tab per KPI instead of stacking every model vertically on one page
     kpi_tabs = st.tabs([f"KPI: {kpi}" for kpi in kpi_columns])
     for kpi_tab, kpi in zip(kpi_tabs, kpi_columns):
@@ -233,13 +245,22 @@ else:
         st.caption(f"Subgroups extracted from the model. Their uplift is measured on the {HOLDOUT_FRACTION:.0%} holdout the model never saw during training.")
 
         # Display the rules in Streamlit with modified background color
+        def render_rules(rules, css_class):
+            if not rules:
+                st.caption("No subgroups found.")
+            for rule in rules:
+                conditions = " &nbsp;·&nbsp; ".join(rule['conditions'])
+                st.markdown(
+                    f"<div class='{css_class}'>"
+                    f"<span class='rules-samples'>{rule['samples']:,} customers</span>"
+                    f"{conditions}</div>",
+                    unsafe_allow_html=True)
+
         st.markdown("\n\n**Best subgroups identified**")
-        for rule in rules_top25:
-            st.markdown(f"<div class='rules-box-top'>{rule}</div>", unsafe_allow_html=True)
+        render_rules(rules_top25, 'rules-box-top')
 
         st.markdown("\n\n**Worst subgroups identified**")
-        for rule in rules_Bottom25:
-            st.markdown(f"<div class='rules-box-bottom'>{rule}</div>", unsafe_allow_html=True)
+        render_rules(rules_Bottom25, 'rules-box-bottom')
 
         st.markdown(f"**Results on the best and worst subgroups (holdout)**")
         st.dataframe(style_metrics(subgroup_results_df), width="stretch", hide_index=True)
@@ -254,17 +275,25 @@ else:
         st.dataframe(style_metrics(quartile_results_df), width="stretch", hide_index=True)
 
         # Qini curve on the holdout: model quality at a glance
-        qini_fig, qini_ax, qini_area = qini_curve(qini_y_true, qini_scores)
-        qini_ax.set_title(f"Qini curve on the holdout ({kpi})")
+        qini_fig, qini_area = qini_curve(qini_y_true, qini_scores)
+        qini_fig.update_layout(title=f"Qini curve on the holdout ({kpi})")
         col1, col2 = st.columns(2)
         with col1:
-            st.pyplot(qini_fig)
+            st.plotly_chart(qini_fig, width="stretch", key=f"qini_{kpi}")
             st.caption(f"Qini area: {qini_area:.5f} (higher is better; 0 = no better than random targeting)")
         with col2:
-            fig, ax = plt.subplots(figsize=(8, 6))
-            lgb.plot_importance(model, ax=ax)
-            ax.set_title(f"Feature importance of the kpi {kpi}")
-            st.pyplot(fig)
+            importance_df = pd.DataFrame({
+                'Feature': model.feature_name_,
+                'Importance': model.feature_importances_,
+            }).sort_values('Importance')
+            imp_fig = go.Figure(go.Bar(
+                x=importance_df['Importance'], y=importance_df['Feature'],
+                orientation='h', marker_color="#4F46E5",
+                hovertemplate="%{y}: %{x} splits<extra></extra>"))
+            imp_fig.update_layout(
+                title=f"Feature importance ({kpi})",
+                xaxis_title="Number of splits", margin=dict(t=60), height=420)
+            st.plotly_chart(imp_fig, width="stretch", key=f"importance_{kpi}")
 
         st.markdown("**Scored customers**")
         # Only the first rows are rendered: sending the full scored dataset to

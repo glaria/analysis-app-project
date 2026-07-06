@@ -6,8 +6,8 @@ import math
 import base64
 import scipy.special as scsp
 import streamlit as st
+import plotly.graph_objects as go
 from sklearn.tree import _tree
-from matplotlib import pyplot as plt
 
 
 significance_treshold = 0.05
@@ -352,8 +352,42 @@ def balanced_sample_weight(df, group_cols):
     group_sizes = df.groupby(group_cols, observed=True)[group_cols[0]].transform('size')
     return (group_sizes.max() / group_sizes).to_numpy()
 
+def _fmt_num(x):
+    return f"{round(x, 2):g}"
+
+
+def _readable_conditions(conditions):
+    """Merge a decision path into short human-readable conditions: numeric
+    bounds on the same feature collapse into one 'between' clause and one-hot
+    encoded splits render as 'feature = value' / 'feature ≠ value'."""
+    lower, upper, order, cats = {}, {}, [], []
+    for kind, name, op, value in conditions:
+        if kind == 'num':
+            if name not in order:
+                order.append(name)
+            if op == '<=':
+                upper[name] = min(upper.get(name, value), value)
+            else:
+                lower[name] = max(lower.get(name, value), value)
+        elif (name, op, value) not in cats:
+            cats.append((name, op, value))
+    parts = []
+    for name in order:
+        lo, up = lower.get(name), upper.get(name)
+        if lo is not None and up is not None:
+            parts.append(f"{name} between {_fmt_num(lo)} and {_fmt_num(up)}")
+        elif up is not None:
+            parts.append(f"{name} ≤ {_fmt_num(up)}")
+        else:
+            parts.append(f"{name} > {_fmt_num(lo)}")
+    parts += [f"{name} {op} {value}" for name, op, value in cats]
+    return parts or ["all customers"]
+
+
 def get_rules(tree, feature_names, class_names, class_of_interest):
-    """ Extract the rules of a decisition tree algorithm """
+    """Extract the subgroups a decision tree assigns to class_of_interest.
+    Returns a list of {'conditions': [readable strings], 'samples': int},
+    sorted by sample count (largest subgroups first)."""
     tree_ = tree.tree_
     feature_name = [
         feature_names[i] if i != _tree.TREE_UNDEFINED else "undefined!"
@@ -361,7 +395,6 @@ def get_rules(tree, feature_names, class_names, class_of_interest):
     ]
 
     paths = []
-    path = []
 
     def recurse(node, path, paths):
 
@@ -369,47 +402,42 @@ def get_rules(tree, feature_names, class_names, class_of_interest):
             name = feature_name[node]
             threshold = tree_.threshold[node]
             p1, p2 = list(path), list(path)
-            
+
             # Check if the feature is a result of one-hot encoding
             if '==' in name:
                 feature, value = name.split('==')
-                p1 += [f"({feature} <> {value})"]
-                p2 += [f"({feature} = {value})"]
+                p1 += [('cat', feature, '≠', value)]
+                p2 += [('cat', feature, '=', value)]
             else:
-                p1 += [f"({name} <= {np.round(threshold, 2)})"]
-                p2 += [f"({name} > {np.round(threshold, 2)})"]
-            
+                p1 += [('num', name, '<=', float(threshold))]
+                p2 += [('num', name, '>', float(threshold))]
+
             recurse(tree_.children_left[node], p1, paths)
             recurse(tree_.children_right[node], p2, paths)
         else:
-            path += [(tree_.value[node], tree_.n_node_samples[node])]
-            paths += [path]
+            paths += [(path, tree_.value[node], tree_.n_node_samples[node])]
 
-    recurse(0, path, paths)
+    recurse(0, [], paths)
 
     # sort by samples count
-    paths = sorted(paths, key=lambda x: x[-1][1], reverse=True)
-    # generate rules
-    rules = []
-    for path in paths:
-        rule = ""
+    paths.sort(key=lambda x: x[2], reverse=True)
 
-        for p in path[:-1]:
-            if rule != "":
-                rule += " and \n"
-            rule += str(p)
-        
-        if class_names[np.argmax(path[-1][0][0])] == class_of_interest:
-            rule += f"\n\n**(samples: {path[-1][1]})**"
-            rules.append(rule)
+    rules = []
+    for conditions, value, samples in paths:
+        if class_names[np.argmax(value[0])] == class_of_interest:
+            rules.append({'conditions': _readable_conditions(conditions),
+                          'samples': int(samples)})
 
     return rules
 
 def qini_curve(y_true, uplift_score):
+    """Qini curve as an interactive Plotly figure, plus the Qini area.
+    The area is computed on every record; the plotted lines are thinned to
+    ~1,000 points so large holdouts don't slow the browser down."""
     # Sorting data by the uplift score
     data = pd.DataFrame({'y_true': y_true, 'uplift_score': uplift_score}).sort_values('uplift_score', ascending=False)
     data.reset_index(drop=True, inplace=True)
-    
+
     data['target_cumsum'] = data.y_true.cumsum()
     data['all_cumnum'] = range(1, len(data) + 1)
 
@@ -420,24 +448,27 @@ def qini_curve(y_true, uplift_score):
     # Calculating the baseline (random model)
     random_model = data['target_cumsum'].iloc[-1] / len(data) * data['proportion_targeted']
 
-    # Creating a figure and an axis
-    fig, ax = plt.subplots()
-
-    # Drawing the Qini curve with proportion targeted on x-axis
-    ax.plot(data['proportion_targeted'], data['uplift_cum'], label='Model')
-
-    # Drawing the baseline with proportion targeted
-    ax.plot(data['proportion_targeted'], random_model, label='Random')
-
-    # Labels and legend
-    ax.set_xlabel('Proportion targeted')
-    ax.set_ylabel('Cumulative Uplift')
-    ax.legend()
-
-    # Calculating the Qini area
+    # Calculating the Qini area (on the full data, before any plot thinning)
     qini_area = (data['uplift_cum'] - random_model).sum() / len(data)
 
-    return fig, ax, qini_area
+    step = max(1, len(data) // 1000)
+    plot_idx = np.unique(np.append(np.arange(0, len(data), step), len(data) - 1))
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=data['proportion_targeted'].iloc[plot_idx], y=data['uplift_cum'].iloc[plot_idx],
+        name='Model', line=dict(color="#4F46E5", width=2),
+        hovertemplate="Targeted: %{x:.1%}<br>Cumulative uplift: %{y:.4f}<extra>Model</extra>"))
+    fig.add_trace(go.Scatter(
+        x=data['proportion_targeted'].iloc[plot_idx], y=random_model.iloc[plot_idx],
+        name='Random', line=dict(color="#9CA3AF", width=2, dash='dash'),
+        hovertemplate="Targeted: %{x:.1%}<br>Cumulative uplift: %{y:.4f}<extra>Random</extra>"))
+    fig.update_layout(
+        xaxis_title='Proportion targeted', yaxis_title='Cumulative uplift',
+        xaxis_tickformat='.0%', legend=dict(orientation='h', y=1.05),
+        margin=dict(t=60), height=420)
+
+    return fig, qini_area
 
 
 

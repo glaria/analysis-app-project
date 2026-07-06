@@ -4,9 +4,9 @@ import itertools
 import plotly.graph_objects as go
 
 
-st.set_page_config(page_title="Analysis", page_icon="📈", layout="wide",)
+st.set_page_config(page_title="Analysis Results · Campaign Analysis App", page_icon="📈", layout="wide")
 
-st.markdown("# Campaign results")
+st.title("Campaign results")
 
 # dataset and information_dataset come from the cached loader: reruns of this
 # page reuse the in-memory copy instead of re-reading the files from disk.

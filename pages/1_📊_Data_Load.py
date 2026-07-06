@@ -7,8 +7,8 @@ import plotly.express as px
 from app_functions import *
 
 # Set up the Streamlit app
-st.set_page_config(page_title="CRM Campaign Analysis App", layout="wide", page_icon= "📊")
-st.title("CRM Campaign Analysis App")
+st.set_page_config(page_title="Data Load · Campaign Analysis App", layout="wide", page_icon="📊")
+st.title("Data load")
 
 # Create a file uploader for CSV or Excel files
 uploaded_file = st.sidebar.file_uploader("Upload your CSV or Excel file", type=['csv', 'xlsx'])
