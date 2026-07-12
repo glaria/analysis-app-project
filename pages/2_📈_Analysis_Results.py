@@ -21,14 +21,16 @@ except (FileNotFoundError, OSError):
 
 dataset, information_dataset = load_processed_data(token)
 
-# Analysis controls
+# Analysis controls. The widgets sync to persistent session-state settings
+# (see persistent_widget_kwargs) so the values survive navigating to other pages.
+init_analysis_settings()
 st.sidebar.header("Analysis settings")
 significance_threshold = st.sidebar.slider(
     "Significance threshold (p-value)", min_value=0.01, max_value=0.20,
-    value=significance_treshold, step=0.01)
+    step=0.01, **persistent_widget_kwargs('significance_threshold'))
 min_group_size = st.sidebar.number_input(
     "Minimum records per group (target and control) to test a segment",
-    min_value=0, value=50, step=10)
+    min_value=0, step=10, **persistent_widget_kwargs('min_group_size'))
 
 # Extract the TGCG column from the dataset (values already lowercased by the loader)
 tgcg_column = information_dataset.loc[information_dataset['METATYPE'] == 'TGCG', 'COLUMN'].values[0]
@@ -65,9 +67,9 @@ for i, (_, row) in enumerate(result_df.iterrows()):
              + ("" if significant else " (not significant at the current threshold)"),
     )
 
-st.caption("In every table, ▲/▼ and the green/red row highlight mark statistically significant "
-           "positive/negative uplift; gray deltas above are not significant. Threshold and "
-           "minimum group size are adjustable in the sidebar.")
+st.caption("In the tables, ▲/▼ and the green/red rows mark uplift that is statistically "
+           "significant. A gray delta above means the overall result is not significant. "
+           "You can change the threshold and the minimum group size in the sidebar.")
 
 tab_overall, tab_discrete, tab_continuous, tab_cross = st.tabs(
     ["Overall results", "Discrete segments", "Continuous variables", "Cross-KPI"])
@@ -135,9 +137,9 @@ with tab_discrete:
         #apply the style and display de df
         st.dataframe(style_metrics(significant_df, significance_threshold), width="stretch", hide_index=True)
     else:
-        st.info("No discrete segments with statistically significant results were found.")
+        st.info("No discrete segment reaches statistical significance at the current threshold.")
     if skipped_segments:
-        st.caption(f"{skipped_segments} segment value(s) not tested: fewer than {min_group_size} target or control records.")
+        st.caption(f"Skipped {skipped_segments} segment value(s) with fewer than {min_group_size} target or control records.")
 
 
 ##seccion variables segmentacion continuas
@@ -313,8 +315,8 @@ def binned_results(token, min_size, n_bins, equal_width):
 
 with tab_continuous:
     st.subheader("Optimal segments")
-    st.caption("The interval of each variable with the highest (and lowest) uplift, "
-               "found with no predefined cut points. Significant results only.")
+    st.caption("For each variable, the interval with the highest and the lowest uplift, "
+               "found without predefined cut points. Only significant results are shown.")
 
     results_df = continuous_interval_results(token, min_group_size)
     #exclude non-significant results (cheap: the scan itself is cached above)
@@ -324,11 +326,12 @@ with tab_continuous:
     if not results_df.empty:
         st.dataframe(style_metrics(results_df, significance_threshold), width="stretch", hide_index=True)
     else:
-        st.info("No continuous-variable segments with statistically significant results were found.")
+        st.info("No interval of the continuous variables reaches significance at the current threshold.")
 
     st.subheader("Bins")
-    st.caption("Each variable split into bins, all bins shown so the response profile is visible: "
-               "green rows are significant positive uplift, red rows significant negative.")
+    st.caption("Every variable split into bins, with all bins shown so you can see the full "
+               "response profile. Green rows have significant positive uplift, red rows "
+               "significant negative.")
 
     bin_col1, bin_col2 = st.columns(2)
     n_bins = bin_col1.number_input("Number of bins", min_value=2, max_value=20, value=5, step=1)
@@ -338,9 +341,10 @@ with tab_continuous:
     if binned_df is not None:
         st.dataframe(style_metrics(binned_df, significance_threshold), width="stretch", hide_index=True)
     else:
-        st.info("No bins could be tested (no continuous segmentation fields, or all bins below the minimum group size).")
+        st.info("Nothing to bin: either there are no continuous segmentation fields, "
+                "or every bin falls below the minimum group size.")
     if skipped_bins:
-        st.caption(f"{skipped_bins} bin(s) not tested: fewer than {min_group_size} target or control records.")
+        st.caption(f"Skipped {skipped_bins} bin(s) with fewer than {min_group_size} target or control records.")
 
 ##fin seccion variables segmentacion continuas
 
@@ -386,8 +390,8 @@ matrix_df = cross_kpi_matrix(token)
 
 with tab_cross:
     st.subheader("Relative uplift between KPI outcomes")
-    st.caption("Each cell is the relative uplift (%) of the customers with both the row "
-               "and the column outcome. Green = positive, red = negative.")
+    st.caption("Each cell shows the relative uplift (%) of the customers with both the row "
+               "and the column outcome. Green is positive, red is negative.")
 
     # Soft diverging colorscale centered on 0: red for negative, green for positive
     colors = [[0.0, "#C0392B"], [0.5, "#F4F4F4"], [1.0, "#1E8449"]]

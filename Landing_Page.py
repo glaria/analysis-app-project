@@ -8,11 +8,12 @@ st.set_page_config(
 
 st.title("📊 Campaign Analysis App")
 st.markdown(
-    "Measure whether a CRM campaign actually worked. Upload the campaign data — "
-    "customers split into a **target group** (received the campaign) and a "
-    "**control group** (didn't) — and get the overall uplift, the customer "
-    "segments that responded best and worst, and the customers to contact in "
-    "the next wave."
+    "A deep dive into how your CRM campaign performed, KPI by KPI and segment "
+    "by segment. You upload the data, with customers split into a **target "
+    "group** that received the campaign and a **control group** that didn't. "
+    "The app works out the uplift of each KPI across your segmentation fields, "
+    "finds the segments that responded best and worst, and picks the customers "
+    "worth contacting in the next wave."
 )
 
 # The three steps of the workflow, in order, each linking to its page
@@ -21,27 +22,27 @@ step1, step2, step3 = st.columns(3)
 with step1, st.container(border=True):
     st.subheader("1 · Data load")
     st.markdown(
-        "Upload your CSV or Excel file. The app guesses the role of each "
-        "column and lets you correct it in an editable table. When everything "
-        "is consistent, press **Process Data**."
+        "Upload a CSV or Excel file. The app guesses what each column is, "
+        "and you can correct it in the table before pressing **Process Data**."
     )
     st.page_link("pages/1_📊_Data_Load.py", label="Open Data Load", icon="📊")
 
 with step2, st.container(border=True):
     st.subheader("2 · Campaign results")
     st.markdown(
-        "The overall uplift per KPI, the discrete segments with significant "
-        "results, the continuous variables as optimal segments and as bins, "
-        "and a cross-KPI heatmap."
+        "The uplift of each KPI, overall and per segment: which discrete "
+        "segments gave significant results, the best intervals of the "
+        "continuous variables (with a bins view next to them), and a "
+        "cross-KPI heatmap."
     )
     st.page_link("pages/2_📈_Analysis_Results.py", label="Open Analysis Results", icon="📈")
 
 with step3, st.container(border=True):
     st.subheader("3 · Advanced analytics")
     st.markdown(
-        "An uplift model per KPI: best and worst subgroups as readable rules, "
-        "honest evaluation on a 30% holdout, and a scored customer base with "
-        "a Top-25% targeting export."
+        "One uplift model per KPI. It turns the best and worst subgroups "
+        "into readable rules, checks them on a 30% holdout, and scores every "
+        "customer so you can export a top-25% targeting list."
     )
     st.page_link("pages/3_🧠_Advanced_Analytics.py", label="Open Advanced Analytics", icon="🧠")
 
@@ -54,7 +55,7 @@ def sample_dataset_bytes():
 
 st.subheader("Try it without your own data")
 st.markdown(
-    "Download the sample dataset (the classic Hillstrom e-mail campaign) and "
+    "No dataset at hand? Download the Hillstrom e-mail campaign sample and "
     "load it in the Data Load page."
 )
 st.download_button(

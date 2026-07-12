@@ -88,26 +88,24 @@ if data is not None and len(data.columns) > 1:
         pk_column = None
     
 
-# Check for duplicate values in the PK column and display a warning message in red if duplicates are found
-    warning_message_container = st.empty()
-
+    # Check for duplicate values in the PK column. The removal confirmation is
+    # keyed by (file, pk column) in session state so it persists across reruns
+    # and resets automatically when a new file or a different PK is chosen.
     if pk_column is not None and pk_column in st.session_state.uploaded_data.columns:
+        duplicate_count = int(st.session_state.uploaded_data[pk_column].duplicated().sum())
+        dedup_key = (file_id, pk_column)
 
-        if st.session_state.uploaded_data[pk_column].duplicated().any() and pk_column is not None:
-            warning_message_container.markdown(f'<span style="color:red">Warning: Duplicate values found in the unique key column ({pk_column})!!</span>', unsafe_allow_html=True)
-
-        # Create a button to remove duplicates
+        if duplicate_count > 0:
+            dup_word = "duplicate" if duplicate_count == 1 else "duplicates"
+            st.warning(f"Found {duplicate_count:,} {dup_word} in the unique key column ({pk_column}).")
             if st.button("Remove Duplicates"):
                 # Remove duplicates while keeping the first record
                 st.session_state.uploaded_data = st.session_state.uploaded_data.drop_duplicates(subset=pk_column, keep="first")
-
-            #st.success("Duplicates removed successfully!")
-
-            # Update the warning message
-                if not st.session_state.uploaded_data[pk_column].duplicated().any():
-                    warning_message_container.markdown(f'<span style="color:green">No duplicate values found in the unique key column ({pk_column}).</span>', unsafe_allow_html=True)
-                else:
-                    warning_message_container.markdown(f'<span style="color:red">Warning: Duplicate values found in the unique key column ({pk_column})!!</span>', unsafe_allow_html=True)
+                st.session_state.duplicates_removed_for = dedup_key
+                # Rerun so the preview and checks above reflect the deduplicated data
+                st.rerun()
+        elif st.session_state.get("duplicates_removed_for") == dedup_key:
+            st.success(f"Duplicates removed. Every value in {pk_column} is unique now.")
 
     # remove null values based on the data types in `user_defined_info_dataset`
     for index, row in st.session_state.user_defined_info_dataset.iterrows():
@@ -124,10 +122,9 @@ if data is not None and len(data.columns) > 1:
 
     if not validation_errors:
         if st.button("Process Data"):
-            st.success("Data processing started!")
+            st.success("Done, your data is ready.")
             url = 'Analysis_Results'
-            #st.write("check out this [link](%s)" % url)
-            st.markdown("Go to the [Analysis results](%s)" % url)
+            st.markdown("Continue to the [Analysis results](%s)" % url)
 
             st.session_state.store['uploaded_data'] = st.session_state.uploaded_data
             st.session_state.store['user_defined_info_dataset'] = st.session_state.user_defined_info_dataset

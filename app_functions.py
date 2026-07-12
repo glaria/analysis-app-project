@@ -12,6 +12,39 @@ from sklearn.tree import _tree
 
 significance_treshold = 0.05
 
+DEFAULT_MIN_GROUP_SIZE = 50
+
+_ANALYSIS_SETTING_DEFAULTS = {
+    'significance_threshold': significance_treshold,
+    'min_group_size': DEFAULT_MIN_GROUP_SIZE,
+}
+
+
+def init_analysis_settings():
+    """Seed the shared analysis settings in session state (once per session).
+    They live under plain session-state keys — not widget keys — because
+    Streamlit drops widget state as soon as its page isn't rendered. Widgets
+    bind to these settings through persistent_widget_kwargs below."""
+    for key, default in _ANALYSIS_SETTING_DEFAULTS.items():
+        st.session_state.setdefault(key, default)
+
+
+def _sync_setting(setting_key, widget_key):
+    st.session_state[setting_key] = st.session_state[widget_key]
+
+
+def persistent_widget_kwargs(setting_key):
+    """kwargs that bind a widget to a persistent analysis setting: the widget
+    is seeded from the setting and writes back on every change, so the value
+    survives page navigation (plain session-state keys are never cleaned up)."""
+    widget_key = f'_{setting_key}_widget'
+    return {
+        'value': st.session_state[setting_key],
+        'key': widget_key,
+        'on_change': _sync_setting,
+        'args': (setting_key, widget_key),
+    }
+
 
 ###*** Processed-data handoff between pages ***###
 # Parquet is the primary format (faster, preserves dtypes); the CSV pair is kept

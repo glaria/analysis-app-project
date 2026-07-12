@@ -61,6 +61,15 @@ except (FileNotFoundError, OSError):
 
 dataset, information_dataset = load_processed_data(token)
 
+# Same significance threshold as the Analysis Results page (read-only here),
+# so a given p-value is highlighted identically on both pages
+init_analysis_settings()
+significance_threshold = st.session_state['significance_threshold']
+st.sidebar.header("Analysis settings")
+st.sidebar.caption(
+    f"Significance threshold (p-value): **{significance_threshold:.2f}**. "
+    "You can change it in the Analysis Results page.")
+
 # Extract the TGCG column from the dataset (values already lowercased by the loader)
 tgcg_column = information_dataset.loc[information_dataset['METATYPE'] == 'TGCG', 'COLUMN'].values[0]
 
@@ -224,14 +233,25 @@ def targeting_csv_for_kpi(token, kpi_original, pk_column):
     return top_customers.to_csv(index=False).encode('utf-8')
 
 
+# Size gates: each message states the actual number, the limit it violates,
+# and links back to Data Load so the user knows where to fix it
+size_gate_message = None
 if num_records > 2000000:
-    st.write("The number of total records is greater than 2,000,000. The model cannot be processed.")
+    size_gate_message = (f"Your dataset has {num_records:,} records; the uplift model "
+                         "can process at most 2,000,000. Load a smaller dataset or a sample.")
 elif num_records < 200:
-    st.write("The number of total records is less than 200. The model cannot be processed.")
+    size_gate_message = (f"Your dataset has {num_records:,} records; at least 200 are "
+                         "needed to train the uplift model.")
 elif num_control_records < 100:
-    st.write("There are fewer than 100 control records. The model cannot be processed.")
+    size_gate_message = (f"Your control group has {num_control_records:,} records; at "
+                         "least 100 are needed to train the uplift model.")
 elif num_target_records < 100:
-    st.write("There are fewer than 100 target records. The model cannot be processed.")
+    size_gate_message = (f"Your target group has {num_target_records:,} records; at "
+                         "least 100 are needed to train the uplift model.")
+
+if size_gate_message is not None:
+    st.warning(size_gate_message)
+    st.page_link("pages/1_📊_Data_Load.py", label="Go to Data Load", icon="📊")
 else:
     # One tab per KPI instead of stacking every model vertically on one page
     kpi_tabs = st.tabs([f"KPI: {kpi}" for kpi in kpi_columns])
@@ -242,7 +262,7 @@ else:
 
         ## Section 1: human-readable segments extracted from the model ##
         st.subheader("1. Best & worst segments")
-        st.caption(f"Subgroups extracted from the model. Their uplift is measured on the {HOLDOUT_FRACTION:.0%} holdout the model never saw during training.")
+        st.caption(f"These subgroups come from the model, but their uplift is measured on the {HOLDOUT_FRACTION:.0%} holdout the model never saw during training.")
 
         # Display the rules in Streamlit with modified background color
         def render_rules(rules, css_class):
@@ -256,23 +276,23 @@ else:
                     f"{conditions}</div>",
                     unsafe_allow_html=True)
 
-        st.markdown("\n\n**Best subgroups identified**")
+        st.markdown("\n\n**Best subgroups**")
         render_rules(rules_top25, 'rules-box-top')
 
-        st.markdown("\n\n**Worst subgroups identified**")
+        st.markdown("\n\n**Worst subgroups**")
         render_rules(rules_Bottom25, 'rules-box-bottom')
 
-        st.markdown(f"**Results on the best and worst subgroups (holdout)**")
-        st.dataframe(style_metrics(subgroup_results_df), width="stretch", hide_index=True)
+        st.markdown(f"**How these subgroups perform on the holdout**")
+        st.dataframe(style_metrics(subgroup_results_df, significance_threshold), width="stretch", hide_index=True)
 
         st.divider()
 
         ## Section 2: the uplift model itself, reusable for targeting ##
         st.subheader("2. Uplift model (reusable)")
-        st.caption("The trained model, its honest evaluation on the holdout, and the scored customer base for targeting the next campaign wave.")
+        st.caption("The model itself: how well it separates responders on the holdout, and the scored customer base for picking the next campaign wave.")
 
         st.markdown("**Uplift of the score quartiles (holdout)**")
-        st.dataframe(style_metrics(quartile_results_df), width="stretch", hide_index=True)
+        st.dataframe(style_metrics(quartile_results_df, significance_threshold), width="stretch", hide_index=True)
 
         # Qini curve on the holdout: model quality at a glance
         qini_fig, qini_area = qini_curve(qini_y_true, qini_scores)
@@ -280,7 +300,7 @@ else:
         col1, col2 = st.columns(2)
         with col1:
             st.plotly_chart(qini_fig, width="stretch", key=f"qini_{kpi}")
-            st.caption(f"Qini area: {qini_area:.5f} (higher is better; 0 = no better than random targeting)")
+            st.caption(f"Qini area: {qini_area:.5f}. Higher is better; at 0 the model targets no better than random.")
         with col2:
             importance_df = pd.DataFrame({
                 'Feature': model.feature_name_,
